@@ -1,0 +1,31 @@
+services:
+  arena:
+    build:
+      context: ..          # repo root (needs pyproject.toml + src/)
+      dockerfile: deploy/Dockerfile
+    ports:
+      - "8765:8765"        # WebSocket — students connect here
+    environment:
+      - ARENA_TICK_INTERVAL=1.0
+      - ARENA_RESPONSE_DEADLINE=0.5
+      - ARENA_N_TICKS=            # blank = run forever
+      - ARENA_SEED=1
+      - ARENA_INITIAL_CASH=100000
+      - ARENA_MAX_DRAWDOWN=500
+      - ARENA_POSITION_LIMIT=300
+      - ARENA_ADMIN_TOKEN=        # set to enable instructor console
+    command: >
+      convexpi-server
+        --tick-interval    ${ARENA_TICK_INTERVAL:-1.0}
+        --response-deadline ${ARENA_RESPONSE_DEADLINE:-0.5}
+        --seed             ${ARENA_SEED:-1}
+        --initial-cash     ${ARENA_INITIAL_CASH:-100000}
+        --max-drawdown     ${ARENA_MAX_DRAWDOWN:-500}
+        --position-limit   ${ARENA_POSITION_LIMIT:-300}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import asyncio, websockets; asyncio.run(websockets.connect('ws://localhost:8765'))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

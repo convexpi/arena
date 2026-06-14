@@ -1,0 +1,16 @@
+[build]
+builder     = "dockerfile"
+dockerfilePath = "deploy/Dockerfile"
+
+[deploy]
+startCommand = "convexpi-server --port $PORT"
+healthcheckPath = "/"          # Railway TCP health check on $PORT
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+# Set these in the Railway dashboard → Variables:
+#   ARENA_TICK_INTERVAL    (default 1.0)
+#   ARENA_N_TICKS          (blank = forever)
+#   ARENA_ADMIN_TOKEN      (keep private — gives instructor control)
+#   ARENA_MAX_DRAWDOWN     (default 500)
+#   ARENA_POSITION_LIMIT   (default 300)
