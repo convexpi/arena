@@ -9,4 +9,4 @@ RUN pip install --no-cache-dir -e ".[dev]"
 
 # Default: run the arena server
 EXPOSE 8765
-CMD ["openquant-server"]
+CMD ["convexpi-server"]
