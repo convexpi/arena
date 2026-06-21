@@ -540,39 +540,50 @@ class ArenaServer:
         key = os.environ.get("SUPABASE_SERVICE_KEY", "")
         mark = self.market.engine.last_price or round(self.market.fundamental.value)
 
+        # Per-agent survival scores: the RiskEngine computes them in score()
+        # (there is no per-agent survival_score attribute to read directly).
+        risk_rows: dict[str, dict] = {}
+        if self.risk:
+            for r in self.risk.score(self.market.accounts, mark):
+                risk_rows[r["agent_id"]] = r
+
+        def _survival(aid):
+            r = risk_rows.get(aid)
+            return r["survival_score"] if r else None
+
+        def _eliminated(aid):
+            r = risk_rows.get(aid)
+            if r is not None:
+                return r["eliminated"]
+            return self.risk.is_eliminated(aid) if self.risk else False
+
         rows = []
         # Background agents
         for aid, acc in self.market.accounts.items():
-            pnl_cents = int(acc.cash + acc.position * mark - self.initial_cash)
-            elim = self.risk.is_eliminated(aid) if self.risk else False
-            rs = self.risk._agents.get(aid) if self.risk else None
             rows.append({
                 "session_id": session_id,
                 "agent_id": aid,
                 "user_id": None,
                 "tick": tick,
-                "pnl_cents": pnl_cents,
+                "pnl_cents": int(acc.cash + acc.position * mark - self.initial_cash),
                 "position": acc.position,
-                "survival_score": rs.survival_score if rs else None,
-                "eliminated": elim,
+                "survival_score": _survival(aid),
+                "eliminated": _eliminated(aid),
             })
         # Remote agents
         async with self._lock:
             remote = dict(self._remote)
         for aid, info in remote.items():
             acc: Account = info["account"]
-            pnl_cents = int(acc.cash + acc.position * mark - self.initial_cash)
-            elim = self.risk.is_eliminated(aid) if self.risk else False
-            rs = self.risk._agents.get(aid) if self.risk else None
             rows.append({
                 "session_id": session_id,
                 "agent_id": aid,
                 "user_id": info.get("user_id"),
                 "tick": tick,
-                "pnl_cents": pnl_cents,
+                "pnl_cents": int(acc.cash + acc.position * mark - self.initial_cash),
                 "position": acc.position,
-                "survival_score": rs.survival_score if rs else None,
-                "eliminated": elim,
+                "survival_score": _survival(aid),
+                "eliminated": _eliminated(aid),
             })
 
         body = json.dumps(rows).encode()
@@ -588,7 +599,10 @@ class ArenaServer:
                 None, lambda: urllib.request.urlopen(req, timeout=3)
             )
         except Exception as e:
-            pass  # never crash the arena loop on a DB write failure
+            # Never crash the arena loop on a DB write failure — but make it
+            # visible (a silently-swallowed error here once hid a push bug that
+            # left every leaderboard empty).
+            print(f"  [rankings push failed: {type(e).__name__}: {e}]")
 
     # ------------------------------------------------------------------
     # Entry point
