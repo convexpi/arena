@@ -10,7 +10,15 @@ restartPolicyMaxRetries = 3
 
 # Set these in the Railway dashboard → Variables:
 #   ARENA_TICK_INTERVAL    (default 1.0)
-#   ARENA_N_TICKS          (blank = forever)
+#   ARENA_N_TICKS          (blank = forever — required for an always-open ladder)
 #   ARENA_ADMIN_TOKEN      (keep private — gives instructor control)
 #   ARENA_MAX_DRAWDOWN     (default 500)
 #   ARENA_POSITION_LIMIT   (default 300)
+#
+# Required to feed a live leaderboard (without these the server runs but writes
+# NO rankings, so the /compete board stays empty):
+#   SUPABASE_URL           Supabase project URL (NEXT_PUBLIC_SUPABASE_URL also accepted)
+#   SUPABASE_SERVICE_KEY   service role key (bypasses RLS)
+#   SUPABASE_SESSION_ID    the arena_sessions.id this server feeds — e.g. the
+#                          'arena-open' session (cohorts.slug='arena-open' →
+#                          arena_sessions where cohort_id=… and status='active')

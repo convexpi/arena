@@ -498,7 +498,7 @@ class ArenaServer:
             await self._broadcast(tick, fv, trades)
 
             # Push rankings to Supabase (optional — only when env vars are set)
-            if os.environ.get("SUPABASE_URL") and os.environ.get("SUPABASE_SESSION_ID"):
+            if (os.environ.get("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL")) and os.environ.get("SUPABASE_SESSION_ID"):
                 asyncio.ensure_future(self._push_rankings(tick))
 
             # Console heartbeat
@@ -536,7 +536,8 @@ class ArenaServer:
 
     async def _push_rankings(self, tick: int) -> None:
         session_id = os.environ.get("SUPABASE_SESSION_ID", "")
-        url = os.environ["SUPABASE_URL"].rstrip("/") + "/rest/v1/arena_rankings"
+        url = (os.environ.get("SUPABASE_URL")
+               or os.environ.get("NEXT_PUBLIC_SUPABASE_URL", "")).rstrip("/") + "/rest/v1/arena_rankings"
         key = os.environ.get("SUPABASE_SERVICE_KEY", "")
         mark = self.market.engine.last_price or round(self.market.fundamental.value)
 
