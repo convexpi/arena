@@ -176,6 +176,8 @@ class ArenaServer:
         admin_token: Optional[str] = None,
         crypto_data: Optional[str] = None,     # path to OHLCV CSV; enables crypto (price) replay mode
         crypto_book: Optional[str] = None,     # path to L2 JSONL; enables real order-book replay mode
+        maker_fee_bps: float = 0.0,            # maker fee (negative = rebate), bps of notional
+        taker_fee_bps: float = 0.0,            # taker fee, bps of notional
     ):
         self.tick_interval = tick_interval
         self.response_deadline = min(response_deadline, tick_interval * 0.9)
@@ -203,6 +205,9 @@ class ArenaServer:
                   f"${meta['start_price']:.2f} → ${meta['end_price']:.2f}")
         else:
             self.market = Market(background_agents, n_ticks=n_ticks or 999_999, seed=seed)
+        # Fee schedule applies in every mode (default 0 = no fees).
+        self.market.maker_fee_bps = maker_fee_bps
+        self.market.taker_fee_bps = taker_fee_bps
         for a in background_agents:
             self.market.accounts[a.agent_id].cash = initial_cash
 
@@ -342,25 +347,36 @@ class ArenaServer:
     # ------------------------------------------------------------------
 
     def _leaderboard_snapshot(self, mark: int) -> list[dict]:
-        """Build leaderboard rows using the risk engine if active, else plain PnL."""
+        """Build leaderboard rows using the risk engine if active, else plain PnL.
+        Each row is annotated with maker/taker fill telemetry."""
         if self.risk:
-            return self.risk.score(self.market.accounts, mark)
-        rows = []
-        for aid, acct in self.market.accounts.items():
-            if aid == "__seed__":
-                continue
-            pnl = (acct.value(mark) - self.initial_cash) / 100
-            rows.append({
-                "agent_id": aid,
-                "pnl": round(pnl, 2),
-                "position": acct.position,
-                "max_drawdown": 0.0,
-                "survival_score": round(pnl, 2),
-                "eliminated": False,
-                "eliminated_tick": None,
-                "elimination_reason": "",
-            })
-        rows.sort(key=lambda r: -r["pnl"])
+            rows = self.risk.score(self.market.accounts, mark)
+        else:
+            rows = []
+            for aid, acct in self.market.accounts.items():
+                if aid == "__seed__":
+                    continue
+                pnl = (acct.value(mark) - self.initial_cash) / 100
+                rows.append({
+                    "agent_id": aid,
+                    "pnl": round(pnl, 2),
+                    "position": acct.position,
+                    "max_drawdown": 0.0,
+                    "survival_score": round(pnl, 2),
+                    "eliminated": False,
+                    "eliminated_tick": None,
+                    "elimination_reason": "",
+                })
+            rows.sort(key=lambda r: -r["pnl"])
+
+        # Annotate with maker/taker volume + fees so the UI can show fill quality.
+        for r in rows:
+            s = self.market.fill_stats.get(r["agent_id"], {})
+            mk, tk = s.get("maker_volume", 0), s.get("taker_volume", 0)
+            r["maker_volume"] = mk
+            r["taker_volume"] = tk
+            r["maker_pct"] = round(100 * mk / (mk + tk), 1) if (mk + tk) else None
+            r["fees"] = round(s.get("fees", 0) / 100, 2)   # cents -> dollars
         return rows
 
     def _make_broadcast(self, tick: int, fv: float, trades: list) -> dict:
@@ -720,6 +736,10 @@ def main():
                    help="Path to OHLCV CSV to replay as the price feed (crypto price mode)")
     p.add_argument("--crypto-book", type=str, default=None,
                    help="Path to L2 depth JSONL to replay as a real order book (book mode)")
+    p.add_argument("--maker-fee-bps", type=float, default=0.0,
+                   help="Maker fee in bps of notional (negative = rebate; default 0)")
+    p.add_argument("--taker-fee-bps", type=float, default=0.0,
+                   help="Taker fee in bps of notional (default 0)")
     args = p.parse_args()
 
     server = ArenaServer(
@@ -735,6 +755,8 @@ def main():
         admin_token=args.admin_token,
         crypto_data=args.crypto_data,
         crypto_book=args.crypto_book,
+        maker_fee_bps=args.maker_fee_bps,
+        taker_fee_bps=args.taker_fee_bps,
     )
     asyncio.run(server.start())
 

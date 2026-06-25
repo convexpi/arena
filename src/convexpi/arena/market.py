@@ -52,7 +52,8 @@ class FundamentalValue:
 
 class Market:
     def __init__(self, agents: list[Agent], n_ticks=2_000, seed=0,
-                 fundamental_kwargs: dict | None = None):
+                 fundamental_kwargs: dict | None = None,
+                 maker_fee_bps: float = 0.0, taker_fee_bps: float = 0.0):
         self.engine = MatchingEngine(seed=seed)
         self.agents = agents
         self.n_ticks = n_ticks
@@ -62,6 +63,12 @@ class Market:
         self.scenarios: dict[int, list] = {}   # tick -> [callables]
         self.snapshots: list[dict] = []
         self._last_tick_trades = []
+        # Maker/taker fee schedule (basis points of notional). A negative maker fee is a rebate.
+        # Default 0 — fees are opt-in and don't change baseline behavior.
+        self.maker_fee_bps = maker_fee_bps
+        self.taker_fee_bps = taker_fee_bps
+        # Per-agent fill telemetry: maker/taker filled volume and cumulative fees paid (cents).
+        self.fill_stats: dict[str, dict] = {}
 
     # ---- scenario engine -------------------------------------------------
     def at_tick(self, tick: int, fn):
@@ -120,9 +127,16 @@ class Market:
                 print(f"[tick {tick}] agent {a.agent_id} error: {e}")
         return orders
 
+    def _record_fill(self, agent_id: str, role: str, qty: int, fee: int) -> None:
+        """Accumulate maker/taker volume and fees for one side of a trade."""
+        s = self.fill_stats.setdefault(
+            agent_id, {"maker_volume": 0, "taker_volume": 0, "fees": 0})
+        s[f"{role}_volume"] += qty
+        s["fees"] += fee
+
     def _settle(self, trades: list[Trade]) -> None:
-        """Update cash and position for every account involved in trades,
-        and fire on_fill callbacks for local agents."""
+        """Update cash and position for every account involved in trades, apply
+        maker/taker fees, record fill telemetry, and fire on_fill callbacks."""
         for t in trades:
             if t.buyer_id in self.accounts:
                 self.accounts[t.buyer_id].cash -= t.price * t.qty
@@ -130,6 +144,21 @@ class Market:
             if t.seller_id in self.accounts:
                 self.accounts[t.seller_id].cash += t.price * t.qty
                 self.accounts[t.seller_id].position -= t.qty
+
+            # The aggressor (the order that crossed the spread) is the taker; the
+            # resting order it hit is the maker.
+            taker_id = t.buyer_id if t.aggressor_side == Side.BUY else t.seller_id
+            maker_id = t.seller_id if t.aggressor_side == Side.BUY else t.buyer_id
+            notional = t.price * t.qty
+            taker_fee = round(notional * self.taker_fee_bps / 1e4)
+            maker_fee = round(notional * self.maker_fee_bps / 1e4)
+            if taker_id in self.accounts:
+                self.accounts[taker_id].cash -= taker_fee
+            if maker_id in self.accounts:
+                self.accounts[maker_id].cash -= maker_fee   # negative fee = rebate
+            self._record_fill(taker_id, "taker", t.qty, taker_fee)
+            self._record_fill(maker_id, "maker", t.qty, maker_fee)
+
         agent_map = {a.agent_id: a for a in self.agents}
         for t in trades:
             for aid, side in [(t.buyer_id, Side.BUY), (t.seller_id, Side.SELL)]:
