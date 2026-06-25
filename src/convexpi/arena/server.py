@@ -75,6 +75,7 @@ from .agents import Agent, InformedTrader, NoiseTrader, MomentumTrader, NaiveMar
 from .market import Market, Account
 from .risk import RiskEngine
 from .crypto_replay import CryptoFeed, CryptoReplayMarket
+from .crypto_book_replay import CryptoBookFeed, CryptoBookReplayMarket
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +174,8 @@ class ArenaServer:
         max_drawdown: Optional[float] = None,  # dollars; None disables risk engine
         position_limit: Optional[int] = None,
         admin_token: Optional[str] = None,
-        crypto_data: Optional[str] = None,     # path to OHLCV CSV; enables crypto replay mode
+        crypto_data: Optional[str] = None,     # path to OHLCV CSV; enables crypto (price) replay mode
+        crypto_book: Optional[str] = None,     # path to L2 JSONL; enables real order-book replay mode
     ):
         self.tick_interval = tick_interval
         self.response_deadline = min(response_deadline, tick_interval * 0.9)
@@ -182,13 +184,22 @@ class ArenaServer:
         self.initial_cash = initial_cash   # cents
         self.admin_token = admin_token
 
-        if crypto_data is not None:
+        if crypto_book is not None:
+            book_feed = CryptoBookFeed(crypto_book, cents_per_unit=100, qty_scale=1000, loop=True)
+            self.market: Market = CryptoBookReplayMarket(
+                background_agents, feed=book_feed, n_ticks=n_ticks or book_feed.n_frames, seed=seed
+            )
+            meta = book_feed.metadata()
+            print(f"  [CRYPTO-BOOK] real order-book replay: {meta['frames']} snapshots, "
+                  f"{meta['levels_per_side']} levels/side  "
+                  f"mid ${(meta['start_mid'] or 0) / 100:.2f} → ${(meta['end_mid'] or 0) / 100:.2f}")
+        elif crypto_data is not None:
             feed = CryptoFeed(crypto_data, cents_per_unit=100, loop=True)
-            self.market: Market = CryptoReplayMarket(
+            self.market = CryptoReplayMarket(
                 background_agents, feed=feed, n_ticks=n_ticks or feed.n_bars, seed=seed
             )
             meta = feed.metadata()
-            print(f"  [CRYPTO] replay mode: {meta['bars']} bars  "
+            print(f"  [CRYPTO] price replay mode: {meta['bars']} bars  "
                   f"${meta['start_price']:.2f} → ${meta['end_price']:.2f}")
         else:
             self.market = Market(background_agents, n_ticks=n_ticks or 999_999, seed=seed)
@@ -706,7 +717,9 @@ def main():
     p.add_argument("--admin-token", type=str, default=None,
                    help="Secret token for admin connections (default: disabled)")
     p.add_argument("--crypto-data", type=str, default=None,
-                   help="Path to OHLCV CSV to replay as the price feed (crypto mode)")
+                   help="Path to OHLCV CSV to replay as the price feed (crypto price mode)")
+    p.add_argument("--crypto-book", type=str, default=None,
+                   help="Path to L2 depth JSONL to replay as a real order book (book mode)")
     args = p.parse_args()
 
     server = ArenaServer(
@@ -721,6 +734,7 @@ def main():
         position_limit=args.position_limit,
         admin_token=args.admin_token,
         crypto_data=args.crypto_data,
+        crypto_book=args.crypto_book,
     )
     asyncio.run(server.start())
 
