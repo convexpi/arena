@@ -6,11 +6,14 @@ their PnL into `arena_rankings` so the leaderboard updates in real time.
 
 ## 1. Create the Railway service
 
-From the `convexpi/arena` repo (Railway reads `deploy/railway.toml`, which builds from source via
-`deploy/Dockerfile` — so it includes the leaderboard-push fix):
+From the `convexpi/arena` repo (Railway reads `railway.toml` at the repo root, which forces the
+Dockerfile builder via `deploy/Dockerfile` — so the package is installed and `data/` is shipped):
 
 1. New Railway service → deploy from the `convexpi/arena` GitHub repo.
-2. It will build the Dockerfile and run `convexpi-server --port $PORT`.
+2. It builds the Dockerfile and runs `python -m convexpi.arena.server` (works regardless of PATH).
+   ⚠️ If the build logs show **Nixpacks** instead of Dockerfile — or you hit
+   `convexpi-server: command not found` — the service isn't reading `railway.toml`. Fix it in
+   Settings → Build → Builder = **Dockerfile**, Dockerfile Path = `deploy/Dockerfile`.
 
 ## 2. Set Variables (Railway dashboard → Variables)
 
@@ -28,9 +31,19 @@ From the `convexpi/arena` repo (Railway reads `deploy/railway.toml`, which build
 |---|---|---|
 | `ARENA_N_TICKS` | (blank) | **leave blank** = run forever (needed for an always-open ladder) |
 | `ARENA_TICK_INTERVAL` | 1.0 | seconds per tick |
-| `ARENA_MAX_DRAWDOWN` | 500 | $ drawdown before elimination |
-| `ARENA_POSITION_LIMIT` | 300 | max abs position before elimination |
-| `ARENA_ADMIN_TOKEN` | (off) | secret for the instructor console |
+| `ARENA_MAX_DRAWDOWN` | (off) | $ drawdown before elimination |
+| `ARENA_POSITION_LIMIT` | (off) | max abs position before elimination |
+| `ARENA_ADMIN_TOKEN` | (off) | secret for the instructor console — **set this on a public server** |
+
+**Real order-book mode** (the `arena-book` season — players trade against recorded L2 depth):
+
+| Variable | Value | Notes |
+|---|---|---|
+| `ARENA_CRYPTO_BOOK` | `data/btcusd_book.jsonl` | real recorded depth, shipped in the image |
+| `ARENA_MAKER_FEE_BPS` | -1 | maker rebate (optional) |
+| `ARENA_TAKER_FEE_BPS` | 3 | taker fee (optional) |
+
+Point `SUPABASE_SESSION_ID` at the `arena-book` session (slug `arena-book`) for this service.
 
 ### Finding the `arena-open` session id
 
@@ -72,7 +85,7 @@ The `/compete/arena-open` page and the instructor console read this variable.
 ```bash
 pip install -e .
 SUPABASE_URL=… SUPABASE_SERVICE_KEY=… SUPABASE_SESSION_ID=… \
-  convexpi-server --n-ticks 20 --tick-interval 0.5 --max-drawdown 500 --position-limit 300
+  python -m convexpi.arena.server --n-ticks 20 --tick-interval 0.5 --max-drawdown 500 --position-limit 300
 ```
 A run with the risk limits set (the production config) should write rows with populated
 `survival_score`. If you see `[rankings push failed: …]`, the Supabase vars are wrong.

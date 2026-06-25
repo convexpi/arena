@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir -e ".[dev]"
 # Ship the sample order book so book-replay mode (ARENA_CRYPTO_BOOK) works out of the box.
 COPY data/ data/
 
-# Default: run the arena server
+# Default: run the arena server. Use `python -m` (not the console script) so it works regardless
+# of whether the scripts bin dir is on PATH.
 EXPOSE 8765
-CMD ["convexpi-server"]
+CMD ["python", "-m", "convexpi.arena.server"]

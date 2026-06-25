@@ -1,9 +1,11 @@
 [build]
-builder     = "dockerfile"
+builder        = "dockerfile"
 dockerfilePath = "deploy/Dockerfile"
 
 [deploy]
-startCommand = "convexpi-server --port $PORT"
+# `python -m` invokes the package directly, so it works even if the console-script bin dir
+# isn't on PATH (the cause of the earlier "convexpi-server: command not found" crash).
+startCommand = "python -m convexpi.arena.server"
 healthcheckPath = "/"          # Railway TCP health check on $PORT
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
@@ -30,6 +32,4 @@ restartPolicyMaxRetries = 3
 # NO rankings, so the /compete board stays empty):
 #   SUPABASE_URL           Supabase project URL (NEXT_PUBLIC_SUPABASE_URL also accepted)
 #   SUPABASE_SERVICE_KEY   service role key (bypasses RLS)
-#   SUPABASE_SESSION_ID    the arena_sessions.id this server feeds — e.g. the
-#                          'arena-open' session (cohorts.slug='arena-open' →
-#                          arena_sessions where cohort_id=… and status='active')
+#   SUPABASE_SESSION_ID    the arena_sessions.id this server feeds (e.g. the 'arena-book' session)
