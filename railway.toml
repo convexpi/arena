@@ -6,7 +6,9 @@ dockerfilePath = "deploy/Dockerfile"
 # `python -m` invokes the package directly, so it works even if the console-script bin dir
 # isn't on PATH (the cause of the earlier "convexpi-server: command not found" crash).
 startCommand = "python -m convexpi.arena.server"
-healthcheckPath = "/"          # Railway TCP health check on $PORT
+# No healthcheckPath: this is a WebSocket server on $PORT, which doesn't answer a plain HTTP GET /
+# with a 200, so an HTTP healthcheck would always fail. Railway marks the deploy healthy once the
+# container is up and listening on $PORT (which websockets.serve does).
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
 
