@@ -2,8 +2,9 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install the package first (layer-cached unless pyproject.toml changes)
-COPY pyproject.toml .
+# Install the package first (layer-cached unless these change).
+# README.md is required because pyproject.toml declares `readme = "README.md"` (hatchling reads it).
+COPY pyproject.toml README.md ./
 COPY src/ src/
 RUN pip install --no-cache-dir -e ".[dev]"
 
