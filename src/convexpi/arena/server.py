@@ -734,12 +734,13 @@ def main():
                    help="Secret token for admin connections (default: disabled)")
     p.add_argument("--crypto-data", type=str, default=None,
                    help="Path to OHLCV CSV to replay as the price feed (crypto price mode)")
-    p.add_argument("--crypto-book", type=str, default=None,
-                   help="Path to L2 depth JSONL to replay as a real order book (book mode)")
-    p.add_argument("--maker-fee-bps", type=float, default=0.0,
-                   help="Maker fee in bps of notional (negative = rebate; default 0)")
-    p.add_argument("--taker-fee-bps", type=float, default=0.0,
-                   help="Taker fee in bps of notional (default 0)")
+    p.add_argument("--crypto-book", type=str, default=os.environ.get("ARENA_CRYPTO_BOOK"),
+                   help="Path to L2 depth JSONL to replay as a real order book (book mode). "
+                        "Env: ARENA_CRYPTO_BOOK")
+    p.add_argument("--maker-fee-bps", type=float, default=float(os.environ.get("ARENA_MAKER_FEE_BPS", 0.0)),
+                   help="Maker fee in bps of notional (negative = rebate; default 0). Env: ARENA_MAKER_FEE_BPS")
+    p.add_argument("--taker-fee-bps", type=float, default=float(os.environ.get("ARENA_TAKER_FEE_BPS", 0.0)),
+                   help="Taker fee in bps of notional (default 0). Env: ARENA_TAKER_FEE_BPS")
     args = p.parse_args()
 
     server = ArenaServer(
