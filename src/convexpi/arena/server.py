@@ -715,23 +715,36 @@ def _default_background() -> list[Agent]:
 
 def main():
     import os
+
+    # Every CLI flag falls back to an environment variable, so the whole server can be configured
+    # through e.g. Railway Variables with no custom start command. An explicit flag still wins.
+    def _env_int(name, default=None):
+        v = os.environ.get(name)
+        return int(v) if v not in (None, "") else default
+
+    def _env_float(name, default=None):
+        v = os.environ.get(name)
+        return float(v) if v not in (None, "") else default
+
     p = argparse.ArgumentParser(description="Arena WebSocket server")
-    p.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8765)))
-    p.add_argument("--tick-interval", type=float, default=1.0,
-                   help="Real seconds per tick (default: 1.0)")
-    p.add_argument("--response-deadline", type=float, default=0.5,
-                   help="Seconds to wait for remote orders per tick (default: 0.5)")
-    p.add_argument("--n-ticks", type=int, default=None,
-                   help="Stop after N ticks (default: infinite)")
-    p.add_argument("--seed", type=int, default=1)
-    p.add_argument("--initial-cash", type=int, default=1000,
-                   help="Starting equity per agent in dollars (default: 1000)")
-    p.add_argument("--max-drawdown", type=float, default=None,
-                   help="Max drawdown in dollars before elimination (default: off)")
-    p.add_argument("--position-limit", type=int, default=None,
-                   help="Max absolute position before elimination (default: off)")
-    p.add_argument("--admin-token", type=str, default=None,
-                   help="Secret token for admin connections (default: disabled)")
+    p.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8765)),
+                   help="Listen port. Env: PORT (Railway sets this automatically)")
+    p.add_argument("--tick-interval", type=float, default=_env_float("ARENA_TICK_INTERVAL", 1.0),
+                   help="Real seconds per tick (default: 1.0). Env: ARENA_TICK_INTERVAL")
+    p.add_argument("--response-deadline", type=float, default=_env_float("ARENA_RESPONSE_DEADLINE", 0.5),
+                   help="Seconds to wait for remote orders per tick (default: 0.5). Env: ARENA_RESPONSE_DEADLINE")
+    p.add_argument("--n-ticks", type=int, default=_env_int("ARENA_N_TICKS"),
+                   help="Stop after N ticks (default: infinite). Env: ARENA_N_TICKS (blank = forever)")
+    p.add_argument("--seed", type=int, default=_env_int("ARENA_SEED", 1),
+                   help="RNG seed (default: 1). Env: ARENA_SEED")
+    p.add_argument("--initial-cash", type=int, default=_env_int("ARENA_INITIAL_CASH", 1000),
+                   help="Starting equity per agent in dollars (default: 1000). Env: ARENA_INITIAL_CASH")
+    p.add_argument("--max-drawdown", type=float, default=_env_float("ARENA_MAX_DRAWDOWN"),
+                   help="Max drawdown in dollars before elimination (default: off). Env: ARENA_MAX_DRAWDOWN")
+    p.add_argument("--position-limit", type=int, default=_env_int("ARENA_POSITION_LIMIT"),
+                   help="Max absolute position before elimination (default: off). Env: ARENA_POSITION_LIMIT")
+    p.add_argument("--admin-token", type=str, default=os.environ.get("ARENA_ADMIN_TOKEN"),
+                   help="Secret token for admin connections (default: disabled). Env: ARENA_ADMIN_TOKEN")
     p.add_argument("--crypto-data", type=str, default=None,
                    help="Path to OHLCV CSV to replay as the price feed (crypto price mode)")
     p.add_argument("--crypto-book", type=str, default=os.environ.get("ARENA_CRYPTO_BOOK"),

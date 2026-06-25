@@ -8,16 +8,21 @@ healthcheckPath = "/"          # Railway TCP health check on $PORT
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
 
-# Set these in the Railway dashboard → Variables:
-#   ARENA_TICK_INTERVAL    (default 1.0)
-#   ARENA_N_TICKS          (blank = forever — required for an always-open ladder)
-#   ARENA_ADMIN_TOKEN      (keep private — gives instructor control)
-#   ARENA_MAX_DRAWDOWN     (default 500)
-#   ARENA_POSITION_LIMIT   (default 300)
+# Every setting is configurable purely through Railway → Variables — no custom start command needed.
+# (Each maps to a CLI flag that falls back to this env var; an explicit flag would still override.)
+#   ARENA_TICK_INTERVAL    seconds per tick (default 1.0)
+#   ARENA_RESPONSE_DEADLINE seconds to wait for remote orders per tick (default 0.5)
+#   ARENA_N_TICKS          blank = forever (the right setting for an always-open ladder)
+#   ARENA_SEED             RNG seed (default 1)
+#   ARENA_INITIAL_CASH     starting equity per agent, dollars (default 1000)
+#   ARENA_ADMIN_TOKEN      secret enabling instructor control; blank = admin DISABLED but UNAUTHED
+#                          (anyone could connect as admin — always set this for a public server)
+#   ARENA_MAX_DRAWDOWN     dollars before elimination (blank = off)
+#   ARENA_POSITION_LIMIT   max absolute position before elimination (blank = off)
 #
 # Real order-book mode (the 'arena-book' season) — players trade against recorded L2 depth:
-#   ARENA_CRYPTO_BOOK      path to an L2 depth JSONL (e.g. data/sample_btcusdt_book.jsonl, shipped in
-#                          the image; or record one with deploy/fetch_crypto_orderbook.py)
+#   ARENA_CRYPTO_BOOK      path to an L2 depth JSONL (e.g. data/btcusd_book.jsonl, shipped in the
+#                          image; or record one with deploy/fetch_crypto_orderbook.py)
 #   ARENA_MAKER_FEE_BPS    maker fee in bps (negative = rebate; default 0)
 #   ARENA_TAKER_FEE_BPS    taker fee in bps (default 0)
 #
