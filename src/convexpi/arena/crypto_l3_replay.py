@@ -17,7 +17,7 @@ against (see tests/arena/test_l3_replay.py).
 """
 from __future__ import annotations
 
-from .engine import Order, Side, Trade
+from .engine import Order, OrderType, Side, Trade
 from .market import Account, Market
 from .mbo import load_l3
 
@@ -36,7 +36,8 @@ class _Mid:
 class MboReplayMarket(Market):
     def __init__(self, agents, *, l3_path: str, cents_per_unit: float = 100,
                  qty_scale: float = 1_000_000, events_per_tick: int = 150,
-                 warmup_events: int = 3000, n_ticks: int | None = None, seed: int = 0):
+                 warmup_events: int = 3000, latency_us: int = 0,
+                 n_ticks: int | None = None, seed: int = 0):
         self._events = load_l3(l3_path)
         if not self._events:
             raise ValueError(f"no L3 events in {l3_path}")
@@ -49,9 +50,12 @@ class MboReplayMarket(Market):
         self._qty = qty_scale
         self._eptick = events_per_tick
         self._warmup = warmup_events
+        self._latency_us = latency_us             # order-entry latency (the cancel-race clock)
         self._cursor = 0
         self._idmap: dict[int, Order] = {}        # bitstamp order id -> resting engine Order
         self._tick = 0
+        self._clock = 0                           # replay clock = timestamp of last L3 event
+        self._pending: list[tuple[int, Order]] = []   # (land_time_us, agent order) awaiting latency
         self._agent_ids = {a.agent_id for a in agents}
 
     # -- conversions ------------------------------------------------------
@@ -103,15 +107,47 @@ class MboReplayMarket(Market):
                 book._pop_level_if_empty(side_hit, price)
         return fills
 
+    def _apply_agent(self, order: Order) -> list[Trade]:
+        """An agent order whose latency has elapsed reaches the matching engine now."""
+        if order.order_type == OrderType.CANCEL:
+            self.engine.book.cancel(order.cancel_id, order.agent_id)
+            return []
+        return self.engine.book.submit(order, self._tick)   # rests (joins FIFO) or crosses real liquidity
+
+    def _drain_pending(self, now: int) -> list[Trade]:
+        """Apply any agent orders whose land time has arrived, before the next real event at `now`."""
+        if not self._pending:
+            return []
+        fills, still = [], []
+        for land, order in self._pending:
+            if land <= now:
+                fills += self._apply_agent(order)
+            else:
+                still.append((land, order))
+        self._pending = still
+        return fills
+
     def _advance(self, n: int) -> list[Trade]:
         fills: list[Trade] = []
         end = min(self._cursor + n, len(self._events))
         for i in range(self._cursor, end):
-            fills += self._apply(self._events[i])
+            ev = self._events[i]
+            fills += self._drain_pending(ev["t"])   # agent orders land at their latency-delayed time
+            self._clock = ev["t"]
+            fills += self._apply(ev)
         self._cursor = end
         if self._cursor >= len(self._events):
-            self._cursor = self._warmup          # loop the stream for long sessions
+            fills += self._drain_pending(float("inf"))   # flush before wrapping (clock would reset)
+            self._cursor = self._warmup
         return fills
+
+    def _collect_orders(self, tick: int) -> list[Order]:
+        # Don't apply agent orders immediately — stamp them with a landing time (decision + latency)
+        # and let _advance interleave them with the real stream. Returning [] keeps process_tick a
+        # no-op for these; the latency gap is exactly where the cancel race is won or lost.
+        for o in super()._collect_orders(tick):
+            self._pending.append((self._clock + self._latency_us, o))
+        return []
 
     # -- Market hooks the tick loop calls --------------------------------
     def _seed_book(self):

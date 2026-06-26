@@ -178,6 +178,7 @@ class ArenaServer:
         crypto_data: Optional[str] = None,     # path to OHLCV CSV; enables crypto (price) replay mode
         crypto_book: Optional[str] = None,     # path to L2 JSONL; enables real order-book replay mode
         crypto_l3: Optional[str] = None,       # path to L3 JSONL; enables order-by-order (queue) mode
+        l3_latency_us: int = 0,                # order-entry latency for L3 mode (the cancel-race clock)
         maker_fee_bps: float = 0.0,            # maker fee (negative = rebate), bps of notional
         taker_fee_bps: float = 0.0,            # taker fee, bps of notional
     ):
@@ -190,9 +191,9 @@ class ArenaServer:
 
         if crypto_l3 is not None:
             self.market: Market = MboReplayMarket(
-                background_agents, l3_path=crypto_l3, n_ticks=n_ticks, seed=seed)
+                background_agents, l3_path=crypto_l3, latency_us=l3_latency_us, n_ticks=n_ticks, seed=seed)
             print(f"  [CRYPTO-L3] order-by-order replay: {len(self.market._events):,} events  "  # type: ignore[attr-defined]
-                  f"(real FIFO queues + queue-based fills)")
+                  f"(real FIFO queues + queue-based fills; latency {l3_latency_us/1000:.0f}ms)")
         elif crypto_book is not None:
             book_feed = CryptoBookFeed(crypto_book, cents_per_unit=100, qty_scale=1000, loop=True)
             self.market: Market = CryptoBookReplayMarket(
@@ -760,6 +761,9 @@ def main():
     p.add_argument("--crypto-l3", type=str, default=os.environ.get("ARENA_CRYPTO_L3"),
                    help="Path to L3 (order-by-order) JSONL for the realistic exchange — real FIFO "
                         "queues + queue-based fills. Env: ARENA_CRYPTO_L3")
+    p.add_argument("--l3-latency-us", type=int, default=_env_int("ARENA_L3_LATENCY_US", 0),
+                   help="Order-entry latency in microseconds for L3 mode (the cancel race). "
+                        "Env: ARENA_L3_LATENCY_US")
     p.add_argument("--maker-fee-bps", type=float, default=float(os.environ.get("ARENA_MAKER_FEE_BPS", 0.0)),
                    help="Maker fee in bps of notional (negative = rebate; default 0). Env: ARENA_MAKER_FEE_BPS")
     p.add_argument("--taker-fee-bps", type=float, default=float(os.environ.get("ARENA_TAKER_FEE_BPS", 0.0)),
@@ -780,6 +784,7 @@ def main():
         crypto_data=args.crypto_data,
         crypto_book=args.crypto_book,
         crypto_l3=args.crypto_l3,
+        l3_latency_us=args.l3_latency_us,
         maker_fee_bps=args.maker_fee_bps,
         taker_fee_bps=args.taker_fee_bps,
     )
