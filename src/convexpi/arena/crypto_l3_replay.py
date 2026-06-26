@@ -48,6 +48,9 @@ class MboReplayMarket(Market):
         self.accounts.setdefault(BOOK, Account())
         self._cents = cents_per_unit
         self._qty = qty_scale
+        # Public: quantities are integer micro-units (qty_scale per natural unit), so
+        # raw PnL (cents x qty_scale) must be divided by this to recover real cents.
+        self.qty_scale = qty_scale
         self._eptick = events_per_tick
         self._warmup = warmup_events
         self._latency_us = latency_us             # order-entry latency (the cancel-race clock)

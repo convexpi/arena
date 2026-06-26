@@ -189,13 +189,19 @@ class ArenaServer:
         self.initial_cash = initial_cash   # cents
         self.admin_token = admin_token
 
+        # Quantities are integer-scaled per mode (shares=1; crypto books use sub-unit
+        # micro-quantities). Raw PnL is in cents x pnl_scale, so money is reported as
+        # pnl_raw / pnl_scale. Default 1 (synthetic / share markets).
+        self.pnl_scale = 1
         if crypto_l3 is not None:
             self.market: Market = MboReplayMarket(
                 background_agents, l3_path=crypto_l3, latency_us=l3_latency_us, n_ticks=n_ticks, seed=seed)
+            self.pnl_scale = self.market.qty_scale  # type: ignore[attr-defined]
             print(f"  [CRYPTO-L3] order-by-order replay: {len(self.market._events):,} events  "  # type: ignore[attr-defined]
                   f"(real FIFO queues + queue-based fills; latency {l3_latency_us/1000:.0f}ms)")
         elif crypto_book is not None:
             book_feed = CryptoBookFeed(crypto_book, cents_per_unit=100, qty_scale=1000, loop=True)
+            self.pnl_scale = 1000  # matches CryptoBookFeed qty_scale above
             self.market: Market = CryptoBookReplayMarket(
                 background_agents, feed=book_feed, n_ticks=n_ticks or book_feed.n_frames, seed=seed
             )
@@ -364,7 +370,7 @@ class ArenaServer:
             for aid, acct in self.market.accounts.items():
                 if aid == "__seed__":
                     continue
-                pnl = (acct.value(mark) - self.initial_cash) / 100
+                pnl = (acct.value(mark) - self.initial_cash) / (100 * self.pnl_scale)
                 rows.append({
                     "agent_id": aid,
                     "pnl": round(pnl, 2),
@@ -384,7 +390,7 @@ class ArenaServer:
             r["maker_volume"] = mk
             r["taker_volume"] = tk
             r["maker_pct"] = round(100 * mk / (mk + tk), 1) if (mk + tk) else None
-            r["fees"] = round(s.get("fees", 0) / 100, 2)   # cents -> dollars
+            r["fees"] = round(s.get("fees", 0) / (100 * self.pnl_scale), 2)   # raw -> dollars
         return rows
 
     def _make_broadcast(self, tick: int, fv: float, trades: list) -> dict:
@@ -562,7 +568,7 @@ class ArenaServer:
         else:
             print(f"{'agent':<24}{'PnL ($)':>12}{'position':>10}")
             for aid, total, pos in self.market.leaderboard():
-                pnl = total - self.initial_cash / 100
+                pnl = (total - self.initial_cash / 100) / self.pnl_scale
                 print(f"  {aid:<22}{pnl:>12,.2f}{pos:>10}")
 
     # ------------------------------------------------------------------
@@ -601,7 +607,7 @@ class ArenaServer:
                 "agent_id": aid,
                 "user_id": None,
                 "tick": tick,
-                "pnl_cents": int(acc.cash + acc.position * mark - self.initial_cash),
+                "pnl_cents": int((acc.cash + acc.position * mark - self.initial_cash) / self.pnl_scale),
                 "position": acc.position,
                 "survival_score": _survival(aid),
                 "eliminated": _eliminated(aid),
@@ -616,7 +622,7 @@ class ArenaServer:
                 "agent_id": aid,
                 "user_id": info.get("user_id"),
                 "tick": tick,
-                "pnl_cents": int(acc.cash + acc.position * mark - self.initial_cash),
+                "pnl_cents": int((acc.cash + acc.position * mark - self.initial_cash) / self.pnl_scale),
                 "position": acc.position,
                 "survival_score": _survival(aid),
                 "eliminated": _eliminated(aid),
