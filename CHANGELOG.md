@@ -3,6 +3,16 @@
 All notable changes to `convexpi-arena` are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Optional Rust L3 core** (`rust/`, built with maturin as `convexpi-arena-rs`). A faithful port of
+  the reference `mbo` semantics — `L3Book` and `simulate_passive_order` — with PyO3 bindings. When the
+  extension is installed, `convexpi.arena.mbo.simulate_passive_order` transparently dispatches to it
+  (`mbo.HAS_RUST` / `mbo.USE_RUST`); otherwise the pure-Python reference is used unchanged. Parity is
+  enforced by `tests/arena/test_rust_conformance.py` (constructed scenarios, a real Bitstamp L3
+  capture, and L3Book reconstruction), which also benchmarks the speedup.
+
 ## [0.2.0] — 2026-06-26
 
 The realistic-exchange release. The Arena gains a full order-by-order (L3) engine and

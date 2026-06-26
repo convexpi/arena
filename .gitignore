@@ -10,3 +10,6 @@ venv/
 .DS_Store
 *.so
 *.dylib
+
+# Rust build artifacts (keep Cargo.lock for reproducible builds)
+rust/target/

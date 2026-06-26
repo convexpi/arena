@@ -1,0 +1,17 @@
+[package]
+name = "convexpi-arena-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Rust-accelerated L3 (market-by-order) core for convexpi-arena"
+license = "MIT"
+
+[lib]
+name = "convexpi_arena_rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.23", features = ["extension-module", "abi3-py310"] }
+
+[profile.release]
+opt-level = 3
+lto = true

@@ -93,9 +93,9 @@ class PassiveResult:
         return (self.fill_ts - self.enter_ts) / 1e6 if self.fill_ts else None
 
 
-def simulate_passive_order(events: list[dict], side: int, price: float, enter_idx: int,
-                           size: float, *, cancel_after_s: float | None = None,
-                           latency_us: int = 0) -> PassiveResult:
+def _simulate_passive_order_py(events: list[dict], side: int, price: float, enter_idx: int,
+                               size: float, *, cancel_after_s: float | None = None,
+                               latency_us: int = 0) -> PassiveResult:
     """Rest a limit order of `size` at `price` (side 0=buy/1=sell) at event index `enter_idx`,
     then replay the real L3 stream and track its FIFO queue position to fill/cancel.
 
@@ -163,3 +163,34 @@ def simulate_passive_order(events: list[dict], side: int, price: float, enter_id
 def load_l3(path: str) -> list[dict]:
     with open(path) as f:
         return [json.loads(line) for line in f if line.strip()]
+
+
+# ---------------------------------------------------------------------------
+# Optional Rust acceleration
+# ---------------------------------------------------------------------------
+# The pure-Python `_simulate_passive_order_py` above is the canonical reference
+# (it defines the semantics). If the compiled `convexpi_arena_rs` extension is
+# installed (see arena/rust/, built with maturin), `simulate_passive_order`
+# transparently dispatches to it for production-replay speed. Parity is enforced
+# by tests/arena/test_rust_conformance.py. Set USE_RUST=False to force Python.
+try:
+    import convexpi_arena_rs as _rs
+    HAS_RUST = True
+except ImportError:                       # pragma: no cover - environment dependent
+    _rs = None
+    HAS_RUST = False
+
+USE_RUST = HAS_RUST
+
+
+def simulate_passive_order(events: list[dict], side: int, price: float, enter_idx: int,
+                           size: float, *, cancel_after_s: float | None = None,
+                           latency_us: int = 0):
+    """Rest a passive limit order and model its queue position to fill/cancel.
+
+    Dispatches to the Rust core when available (`USE_RUST`), else the Python
+    reference. Both return an object with the same fields (see `PassiveResult`).
+    """
+    impl = _rs.simulate_passive_order if (USE_RUST and _rs is not None) else _simulate_passive_order_py
+    return impl(events, side, price, enter_idx, size,
+                cancel_after_s=cancel_after_s, latency_us=latency_us)
