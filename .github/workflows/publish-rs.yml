@@ -1,0 +1,84 @@
+name: Publish convexpi-arena-rs
+
+# Build cross-platform wheels for the Rust L3 core and publish to PyPI.
+# Triggered by a dedicated tag namespace so it's independent of the pure-Python
+# package's `v*` tags, e.g.:  git tag rs-v0.1.0 && git push origin rs-v0.1.0
+#
+# Wheels are abi3 (built once per platform, compatible with CPython >= 3.10).
+#
+# One-time PyPI setup (trusted publishing, no API token):
+#   Create the `convexpi-arena-rs` project's *pending publisher* on PyPI with
+#   owner=convexpi, repo=arena, workflow=publish-rs.yml, environment=pypi.
+
+on:
+  push:
+    tags:
+      - "rs-v*"
+  workflow_dispatch: {}
+
+jobs:
+  build-wheels:
+    name: wheels ${{ matrix.platform.target }}
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { runner: ubuntu-latest,  target: x86_64,  manylinux: auto }
+          - { runner: ubuntu-latest,  target: aarch64, manylinux: auto }
+          - { runner: macos-latest,   target: aarch64, manylinux: "" }
+          - { runner: macos-13,       target: x86_64,  manylinux: "" }
+          - { runner: windows-latest, target: x64,     manylinux: "" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: rust
+          target: ${{ matrix.platform.target }}
+          manylinux: ${{ matrix.platform.manylinux }}
+          args: --release --out dist
+          sccache: "true"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.platform.runner }}-${{ matrix.platform.target }}
+          path: rust/dist
+
+  build-sdist:
+    name: sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: rust
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: rust/dist
+
+  publish:
+    name: Publish to PyPI
+    needs: [build-wheels, build-sdist]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/rs-v')
+    environment: pypi
+    permissions:
+      id-token: write   # trusted publishing — no API token needed
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist

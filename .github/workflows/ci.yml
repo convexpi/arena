@@ -28,3 +28,24 @@ jobs:
 
       - name: Run tests
         run: pytest --tb=short -q
+
+  rust-conformance:
+    name: Rust L3 conformance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install package + build the Rust extension
+        run: |
+          pip install -e ".[dev]"
+          pip install ./rust          # builds convexpi-arena-rs via maturin and installs it
+
+      - name: Run conformance + benchmark
+        run: pytest tests/arena/test_rust_conformance.py -q -s
