@@ -76,6 +76,7 @@ from .market import Market, Account
 from .risk import RiskEngine
 from .crypto_replay import CryptoFeed, CryptoReplayMarket
 from .crypto_book_replay import CryptoBookFeed, CryptoBookReplayMarket
+from .crypto_l3_replay import MboReplayMarket
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +177,7 @@ class ArenaServer:
         admin_token: Optional[str] = None,
         crypto_data: Optional[str] = None,     # path to OHLCV CSV; enables crypto (price) replay mode
         crypto_book: Optional[str] = None,     # path to L2 JSONL; enables real order-book replay mode
+        crypto_l3: Optional[str] = None,       # path to L3 JSONL; enables order-by-order (queue) mode
         maker_fee_bps: float = 0.0,            # maker fee (negative = rebate), bps of notional
         taker_fee_bps: float = 0.0,            # taker fee, bps of notional
     ):
@@ -186,7 +188,12 @@ class ArenaServer:
         self.initial_cash = initial_cash   # cents
         self.admin_token = admin_token
 
-        if crypto_book is not None:
+        if crypto_l3 is not None:
+            self.market: Market = MboReplayMarket(
+                background_agents, l3_path=crypto_l3, n_ticks=n_ticks, seed=seed)
+            print(f"  [CRYPTO-L3] order-by-order replay: {len(self.market._events):,} events  "  # type: ignore[attr-defined]
+                  f"(real FIFO queues + queue-based fills)")
+        elif crypto_book is not None:
             book_feed = CryptoBookFeed(crypto_book, cents_per_unit=100, qty_scale=1000, loop=True)
             self.market: Market = CryptoBookReplayMarket(
                 background_agents, feed=book_feed, n_ticks=n_ticks or book_feed.n_frames, seed=seed
@@ -750,6 +757,9 @@ def main():
     p.add_argument("--crypto-book", type=str, default=os.environ.get("ARENA_CRYPTO_BOOK"),
                    help="Path to L2 depth JSONL to replay as a real order book (book mode). "
                         "Env: ARENA_CRYPTO_BOOK")
+    p.add_argument("--crypto-l3", type=str, default=os.environ.get("ARENA_CRYPTO_L3"),
+                   help="Path to L3 (order-by-order) JSONL for the realistic exchange — real FIFO "
+                        "queues + queue-based fills. Env: ARENA_CRYPTO_L3")
     p.add_argument("--maker-fee-bps", type=float, default=float(os.environ.get("ARENA_MAKER_FEE_BPS", 0.0)),
                    help="Maker fee in bps of notional (negative = rebate; default 0). Env: ARENA_MAKER_FEE_BPS")
     p.add_argument("--taker-fee-bps", type=float, default=float(os.environ.get("ARENA_TAKER_FEE_BPS", 0.0)),
@@ -769,6 +779,7 @@ def main():
         admin_token=args.admin_token,
         crypto_data=args.crypto_data,
         crypto_book=args.crypto_book,
+        crypto_l3=args.crypto_l3,
         maker_fee_bps=args.maker_fee_bps,
         taker_fee_bps=args.taker_fee_bps,
     )
