@@ -27,6 +27,8 @@ restartPolicyMaxRetries = 3
 # Real order-book mode (the 'arena-book' season) — players trade against recorded L2 depth:
 #   ARENA_CRYPTO_BOOK      path to an L2 depth JSONL (e.g. data/btcusd_book.jsonl, shipped in the
 #                          image; or record one with deploy/fetch_crypto_orderbook.py)
+#   ARENA_CRYPTO_L3        path to an L3 order-by-order JSONL (the realistic exchange: real FIFO
+#                          queues + queue-based fills; record with deploy/fetch_crypto_l3.py)
 #   ARENA_MAKER_FEE_BPS    maker fee in bps (negative = rebate; default 0)
 #   ARENA_TAKER_FEE_BPS    taker fee in bps (default 0)
 #

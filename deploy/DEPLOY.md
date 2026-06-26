@@ -45,6 +45,11 @@ Dockerfile builder via `deploy/Dockerfile` — so the package is installed and `
 
 Point `SUPABASE_SESSION_ID` at the `arena-book` session (slug `arena-book`) for this service.
 
+**Realistic L3 mode** (the `arena-l3` season — order-by-order, real FIFO queue position + queue-based
+fills): set `ARENA_CRYPTO_L3=data/btcusd_l3_sample.jsonl` (shipped in the image; record fresh with
+`deploy/fetch_crypto_l3.py`) and point `SUPABASE_SESSION_ID` at the `arena-l3` session. This is a
+*separate service* from the L2 book — run both to offer both.
+
 ### Finding the `arena-open` session id
 
 ```sql
