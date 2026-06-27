@@ -241,6 +241,10 @@ class ArenaServer:
         # Cross-tick state
         self._pending_scenarios: list[tuple[str, dict]] = []
         self._liquidation_queue: list[Order] = []
+        # Rolling per-agent PnL ($) history, pushed to arena_rankings.pnl_history
+        # so the UI can draw a sparkline (the table otherwise keeps only the latest row).
+        self._pnl_hist: dict[str, list[float]] = {}
+        self._pnl_hist_len = 24
 
     # ------------------------------------------------------------------
     # WebSocket connection handlers
@@ -599,34 +603,28 @@ class ArenaServer:
                 return r["eliminated"]
             return self.risk.is_eliminated(aid) if self.risk else False
 
-        rows = []
-        # Background agents
-        for aid, acc in self.market.accounts.items():
-            rows.append({
+        def _row(aid: str, acc: Account, user_id):
+            pnl_cents = int((acc.cash + acc.position * mark - self.initial_cash) / self.pnl_scale)
+            hist = self._pnl_hist.setdefault(aid, [])
+            hist.append(round(pnl_cents / 100, 2))            # PnL in dollars
+            if len(hist) > self._pnl_hist_len:
+                del hist[:-self._pnl_hist_len]
+            return {
                 "session_id": session_id,
                 "agent_id": aid,
-                "user_id": None,
+                "user_id": user_id,
                 "tick": tick,
-                "pnl_cents": int((acc.cash + acc.position * mark - self.initial_cash) / self.pnl_scale),
+                "pnl_cents": pnl_cents,
                 "position": acc.position,
                 "survival_score": _survival(aid),
                 "eliminated": _eliminated(aid),
-            })
-        # Remote agents
+                "pnl_history": list(hist),
+            }
+
+        rows = [_row(aid, acc, None) for aid, acc in self.market.accounts.items()]
         async with self._lock:
             remote = dict(self._remote)
-        for aid, info in remote.items():
-            acc: Account = info["account"]
-            rows.append({
-                "session_id": session_id,
-                "agent_id": aid,
-                "user_id": info.get("user_id"),
-                "tick": tick,
-                "pnl_cents": int((acc.cash + acc.position * mark - self.initial_cash) / self.pnl_scale),
-                "position": acc.position,
-                "survival_score": _survival(aid),
-                "eliminated": _eliminated(aid),
-            })
+        rows += [_row(aid, info["account"], info.get("user_id")) for aid, info in remote.items()]
 
         body = json.dumps(rows).encode()
         headers = {
