@@ -79,6 +79,22 @@ class OrderBook:
     def best_ask(self) -> Optional[int]:
         return min(self.asks) if self.asks else None
 
+    def clean_touch(self) -> tuple[Optional[int], Optional[int]]:
+        """Best (bid, ask) that aren't crossed.
+
+        Reconstructing an L3 stream without an initial snapshot strands a few orders that cross
+        the book; this returns the uncrossed touch (the best ask, and the best bid strictly below
+        it) so the reported quote and mid stay sane. For a normal, uncrossed book this is exactly
+        ``(best_bid(), best_ask())``. Mirrors ``mbo.OrderBook.clean_touch``."""
+        # Computed directly (not via best_bid/best_ask) so callers may safely override those to
+        # delegate here without recursing.
+        if not self.bids or not self.asks:
+            return (max(self.bids) if self.bids else None,
+                    min(self.asks) if self.asks else None)
+        ask = min(self.asks)
+        bid = next((p for p in sorted(self.bids, reverse=True) if p < ask), None)
+        return bid, ask
+
     def depth(self, levels: int = 5) -> dict:
         bids = sorted(self.bids.items(), key=lambda kv: -kv[0])[:levels]
         asks = sorted(self.asks.items(), key=lambda kv: kv[0])[:levels]

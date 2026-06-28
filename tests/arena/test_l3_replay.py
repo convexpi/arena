@@ -102,3 +102,37 @@ def test_slow_cancel_gets_adversely_filled(tmp_path):
                         warmup_events=1, events_per_tick=1, n_ticks=4, latency_us=4_000_000)
     m.run()
     assert m.accounts["slow"].position == 20000      # trade filled us before the slow cancel landed
+
+
+from convexpi.arena.crypto_l3_replay import BOOK
+from convexpi.arena.agents import NoiseTrader
+
+
+def test_fill_deleted_order_is_swept(tmp_path):
+    # A real order deleted by a trade (tr != 0) is popped from the id map but skipped on the book,
+    # relying on a trade event to consume it. With no matching trade, it strands; the orphan sweep
+    # must remove it so dead liquidity doesn't accumulate and cross the book.
+    events = [
+        {"k": "o", "e": "created", "id": 1, "p": 100.0, "a": 0.5, "s": 0, "tr": 0,   "t": 1_000_000},
+        {"k": "o", "e": "deleted", "id": 1, "p": 100.0, "a": 0.0, "s": 0, "tr": 0.5, "t": 2_000_000},
+    ]
+    m = MboReplayMarket([PassiveBuyer("a", 1, 1)], l3_path=_write(tmp_path, events),
+                        warmup_events=1, events_per_tick=1, n_ticks=1)
+    m.run()
+    assert all(o.agent_id != BOOK for o in m.engine.book.live.values())   # no stranded real liquidity
+
+
+def test_clean_touch_reports_uncrossed_book(tmp_path):
+    # Snapshot-less reconstruction can leave a stale order crossing the book. The raw book stays
+    # crossed, but the reported touch (and the synthetic mid) must be uncrossed.
+    events = [
+        {"k": "o", "e": "created", "id": 1, "p":  98.0, "a": 0.5, "s": 0, "tr": 0, "t": 1_000_000},  # bid 98
+        {"k": "o", "e": "created", "id": 2, "p": 100.0, "a": 0.5, "s": 0, "tr": 0, "t": 1_100_000},  # stale bid 100
+        {"k": "o", "e": "created", "id": 3, "p":  99.0, "a": 0.5, "s": 1, "tr": 0, "t": 1_200_000},  # ask 99 -> crosses
+    ]
+    m = MboReplayMarket([NoiseTrader("n", seed=1)], l3_path=_write(tmp_path, events),
+                        warmup_events=3, events_per_tick=1, n_ticks=1)
+    m._seed_book()
+    book = m.engine.book
+    assert max(book.bids) == 10000 and min(book.asks) == 9900     # raw book is crossed
+    assert book.best_bid() == 9800 and book.best_ask() == 9900    # reported touch is uncrossed

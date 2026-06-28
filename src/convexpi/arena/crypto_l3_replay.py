@@ -60,6 +60,11 @@ class MboReplayMarket(Market):
         self._clock = 0                           # replay clock = timestamp of last L3 event
         self._pending: list[tuple[int, Order]] = []   # (land_time_us, agent order) awaiting latency
         self._agent_ids = {a.agent_id for a in agents}
+        # Report the uncrossed touch in the agent-facing state and telemetry snapshot (both read
+        # book.best_bid/best_ask). Matching uses min()/max() directly, so it is unaffected.
+        book = self.engine.book
+        book.best_bid = lambda b=book: b.clean_touch()[0]   # type: ignore[method-assign]
+        book.best_ask = lambda b=book: b.clean_touch()[1]   # type: ignore[method-assign]
 
     # -- conversions ------------------------------------------------------
     def _px(self, p: float) -> int:
@@ -110,6 +115,28 @@ class MboReplayMarket(Market):
                 book._pop_level_if_empty(side_hit, price)
         return fills
 
+    def _sweep_orphans(self) -> int:
+        """Remove stranded real liquidity the feed has already deleted but that's still on the book.
+
+        A real order deleted by a trade (``deleted`` with ``tr != 0``) is popped from the id map
+        but left on the book on the assumption a ``trade`` event consumed it. This recording has
+        only ~50 trade events against ~6800 deletes, so that reconciliation routinely misses and
+        the order is stranded: no id-map entry means the feed can never reference it again, yet it
+        rests forever — pinning best-bid/ask to stale extremes, which corrupts the synthetic mid
+        and lets agents fill against dead liquidity.
+
+        Any BOOK-owned order no longer in the id map is provably dead (the feed is done with it),
+        so removing it is safe and correct. Agent orders are never in the id map, so they are
+        identified by ownership and never touched.
+        """
+        book = self.engine.book
+        live_ids = {o.order_id for o in self._idmap.values()}
+        orphans = [o for o in book.live.values()
+                   if o.agent_id == BOOK and o.order_id not in live_ids]
+        for o in orphans:
+            book.cancel(o.order_id, BOOK)
+        return len(orphans)
+
     def _apply_agent(self, order: Order) -> list[Trade]:
         """An agent order whose latency has elapsed reaches the matching engine now."""
         if order.order_type == OrderType.CANCEL:
@@ -142,6 +169,7 @@ class MboReplayMarket(Market):
         if self._cursor >= len(self._events):
             fills += self._drain_pending(float("inf"))   # flush before wrapping (clock would reset)
             self._cursor = self._warmup
+        self._sweep_orphans()                            # clear stranded (feed-deleted) liquidity
         return fills
 
     def _collect_orders(self, tick: int) -> list[Order]:
@@ -163,6 +191,7 @@ class MboReplayMarket(Market):
             self._settle(fills)                    # credit any agent orders that were at the front
             self.engine.trades.extend(fills)
             self.engine.last_price = fills[-1].price
-        bb, ba = self.engine.book.best_bid(), self.engine.book.best_ask()
+        # Snapshot-less reconstruction leaves residual crossing; price the mid off the clean touch.
+        bb, ba = self.engine.book.clean_touch()
         if bb and ba:
             self.fundamental.value = (bb + ba) / 2

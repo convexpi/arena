@@ -640,16 +640,24 @@ class ArenaServer:
             "Content-Type": "application/json",
             "Prefer": "resolution=merge-duplicates",   # upsert
         }
-        try:
-            req = urllib.request.Request(url, data=body, headers=headers, method="POST")
-            await asyncio.get_event_loop().run_in_executor(
-                None, lambda: urllib.request.urlopen(req, timeout=3)
-            )
-        except Exception as e:
-            # Never crash the arena loop on a DB write failure — but make it
-            # visible (a silently-swallowed error here once hid a push bug that
-            # left every leaderboard empty).
-            print(f"  [rankings push failed: {type(e).__name__}: {e}]")
+        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        # Retry once: most failures here are transient SSL/timeout blips against Supabase, and a
+        # single retry recovers the row rather than dropping that tick's leaderboard update.
+        # Runs fire-and-forget (ensure_future), so the backoff never stalls the arena loop.
+        last_err: Exception | None = None
+        for attempt in range(2):
+            try:
+                await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: urllib.request.urlopen(req, timeout=3)
+                )
+                return
+            except Exception as e:
+                last_err = e
+                if attempt == 0:
+                    await asyncio.sleep(0.5)
+        # Never crash the arena loop on a DB write failure — but make it visible (a silently
+        # swallowed error here once hid a push bug that left every leaderboard empty).
+        print(f"  [rankings push failed after retry: {type(last_err).__name__}: {last_err}]")
 
     # ------------------------------------------------------------------
     # Entry point
