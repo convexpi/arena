@@ -41,6 +41,18 @@ class MboReplayMarket(Market):
         self._events = load_l3(l3_path)
         if not self._events:
             raise ValueError(f"no L3 events in {l3_path}")
+        # A snapshot-seeded recording (deploy/fetch_crypto_l3.py) opens with a block of `created`
+        # events that all share the snapshot timestamp. Warm up through the entire block so the
+        # book starts from the complete real snapshot rather than half-built. Unseeded recordings
+        # don't open with such a block, so warmup stays at the requested default.
+        t0 = self._events[0]["t"]
+        snap_len = 0
+        for ev in self._events:
+            if ev.get("k") == "o" and ev.get("e") == "created" and ev["t"] == t0:
+                snap_len += 1
+            else:
+                break
+        warmup_events = max(warmup_events, snap_len)
         avail = max(1, len(self._events) - warmup_events)
         n = n_ticks if n_ticks is not None else max(1, avail // events_per_tick)
         super().__init__(agents, n_ticks=n, seed=seed)

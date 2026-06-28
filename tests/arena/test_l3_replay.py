@@ -122,6 +122,26 @@ def test_fill_deleted_order_is_swept(tmp_path):
     assert all(o.agent_id != BOOK for o in m.engine.book.live.values())   # no stranded real liquidity
 
 
+def test_snapshot_seed_builds_complete_uncrossed_book(tmp_path):
+    # A snapshot-seeded recording opens with a block of `created` events sharing one timestamp.
+    # The replay must warm up through the whole block so the real book starts complete & uncrossed.
+    T0 = 1_000_000
+    snap = (
+        [{"k": "o", "e": "created", "id": 1000 + i, "p": p, "a": 0.5, "s": 0, "tr": 0, "t": T0}
+         for i, p in enumerate([100.0, 99.0, 98.0])]        # bids
+        + [{"k": "o", "e": "created", "id": 2000 + i, "p": p, "a": 0.5, "s": 1, "tr": 0, "t": T0}
+           for i, p in enumerate([101.0, 102.0, 103.0])]    # asks
+    )
+    stream = [{"k": "o", "e": "created", "id": 3001, "p": 100.5, "a": 0.2, "s": 0, "tr": 0, "t": T0 + 1000}]
+    m = MboReplayMarket([NoiseTrader("n", seed=1)], l3_path=_write(tmp_path, snap + stream),
+                        warmup_events=1, events_per_tick=1, n_ticks=1)
+    assert m._warmup == len(snap)                            # warmed up through the whole snapshot
+    m._seed_book()
+    book = m.engine.book
+    assert max(book.bids) < min(book.asks)                   # raw book is complete and uncrossed
+    assert len(book.live) == len(snap)
+
+
 def test_clean_touch_reports_uncrossed_book(tmp_path):
     # Snapshot-less reconstruction can leave a stale order crossing the book. The raw book stays
     # crossed, but the reported touch (and the synthetic mid) must be uncrossed.
