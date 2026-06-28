@@ -62,6 +62,7 @@ import json
 import argparse
 import os
 import urllib.request
+from datetime import datetime, timezone
 from typing import Optional
 
 try:
@@ -603,6 +604,11 @@ class ArenaServer:
                 return r["eliminated"]
             return self.risk.is_eliminated(aid) if self.risk else False
 
+        # Set updated_at ourselves: the upsert UPDATEs existing rows (merge-duplicates),
+        # and without an explicit value the column keeps its original INSERT time — which
+        # makes the live board look frozen even while ticks advance.
+        now_iso = datetime.now(timezone.utc).isoformat()
+
         def _row(aid: str, acc: Account, user_id):
             pnl_cents = int((acc.cash + acc.position * mark - self.initial_cash) / self.pnl_scale)
             hist = self._pnl_hist.setdefault(aid, [])
@@ -619,6 +625,7 @@ class ArenaServer:
                 "survival_score": _survival(aid),
                 "eliminated": _eliminated(aid),
                 "pnl_history": list(hist),
+                "updated_at": now_iso,
             }
 
         rows = [_row(aid, acc, None) for aid, acc in self.market.accounts.items()]
