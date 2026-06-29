@@ -142,17 +142,18 @@ def test_snapshot_seed_builds_complete_uncrossed_book(tmp_path):
     assert len(book.live) == len(snap)
 
 
-def test_clean_touch_reports_uncrossed_book(tmp_path):
-    # Snapshot-less reconstruction can leave a stale order crossing the book. The raw book stays
-    # crossed, but the reported touch (and the synthetic mid) must be uncrossed.
+def test_marketable_created_is_not_rested(tmp_path):
+    # Bitstamp emits `created` for marketable orders too. Such a taker must NOT rest crossed (that
+    # stranded deep stale liquidity); its fills come from the trade stream. A `created` whose price
+    # crosses the live book is dropped from the resting book, which stays uncrossed.
     events = [
-        {"k": "o", "e": "created", "id": 1, "p":  98.0, "a": 0.5, "s": 0, "tr": 0, "t": 1_000_000},  # bid 98
-        {"k": "o", "e": "created", "id": 2, "p": 100.0, "a": 0.5, "s": 0, "tr": 0, "t": 1_100_000},  # stale bid 100
-        {"k": "o", "e": "created", "id": 3, "p":  99.0, "a": 0.5, "s": 1, "tr": 0, "t": 1_200_000},  # ask 99 -> crosses
+        {"k": "o", "e": "created", "id": 1, "p":  98.0, "a": 0.5, "s": 0, "tr": 0, "t": 1_000_000},  # bid 98 rests
+        {"k": "o", "e": "created", "id": 2, "p": 100.0, "a": 0.5, "s": 0, "tr": 0, "t": 1_100_000},  # bid 100 rests
+        {"k": "o", "e": "created", "id": 3, "p":  99.0, "a": 0.5, "s": 1, "tr": 0, "t": 1_200_000},  # ask 99 crosses -> dropped
     ]
     m = MboReplayMarket([NoiseTrader("n", seed=1)], l3_path=_write(tmp_path, events),
                         warmup_events=3, events_per_tick=1, n_ticks=1)
     m._seed_book()
     book = m.engine.book
-    assert max(book.bids) == 10000 and min(book.asks) == 9900     # raw book is crossed
-    assert book.best_bid() == 9800 and book.best_ask() == 9900    # reported touch is uncrossed
+    assert not book.asks                                    # the marketable ask was not rested
+    assert set(book.bids) == {9800, 10000}                  # resting bids intact, book uncrossed

@@ -67,6 +67,21 @@ class TestOrderBook:
             book.submit(limit("a", Side.SELL, p, 5), tick=0)
         assert book.best_ask() == 103
 
+    def test_clean_touch_uncrosses(self):
+        # Force a crossed book (a stale bid above the best ask) via _rest, bypassing matching.
+        book = OrderBook()
+        for p in [98, 100]:
+            book._rest(limit("a", Side.BUY, p, 5))      # bids at 98 and (stale) 100
+        book._rest(limit("a", Side.SELL, 99, 5))         # ask at 99 -> crossed by the 100 bid
+        assert book.best_bid() == 100 and book.best_ask() == 99   # raw touch is crossed
+        assert book.clean_touch() == (98, 99)            # uncrossed: ask, and best bid below it
+
+    def test_clean_touch_matches_touch_when_uncrossed(self):
+        book = OrderBook()
+        book._rest(limit("a", Side.BUY, 99, 5))
+        book._rest(limit("a", Side.SELL, 101, 5))
+        assert book.clean_touch() == (book.best_bid(), book.best_ask()) == (99, 101)
+
     def test_cancel_removes_bid(self):
         book = OrderBook()
         o = limit("a", Side.BUY, 100, 10)

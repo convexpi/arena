@@ -91,9 +91,22 @@ class MboReplayMarket(Market):
         if ev["k"] == "o":
             e = ev["e"]
             if e == "created":
-                o = Order(BOOK, Side.BUY if ev["s"] == 0 else Side.SELL, self._qy(ev["a"]), price=self._px(ev["p"]))
-                book._rest(o)                      # append to the FIFO at this price
-                self._idmap[ev["id"]] = o
+                side = Side.BUY if ev["s"] == 0 else Side.SELL
+                price = self._px(ev["p"])
+                # Bitstamp emits `created` for marketable orders too. Such an order is a taker —
+                # its execution arrives on the trade stream — so resting it crossed is what left
+                # deep stale liquidity crossing the book. Only rest orders that don't cross the
+                # live touch (use the raw book, not the clean-touch view).
+                raw_bid = max(book.bids) if book.bids else None
+                raw_ask = min(book.asks) if book.asks else None
+                crosses = (raw_ask is not None and price >= raw_ask) if side == Side.BUY \
+                    else (raw_bid is not None and price <= raw_bid)
+                if not crosses:
+                    o = Order(BOOK, side, self._qy(ev["a"]), price=price)
+                    book._rest(o)                  # append to the FIFO at this price
+                    self._idmap[ev["id"]] = o
+                # else: marketable — don't rest; the trade stream carries its fills, and its
+                # later `deleted` simply no-ops on the id map.
             elif e == "changed":
                 o = self._idmap.get(ev["id"])
                 if o is not None:
