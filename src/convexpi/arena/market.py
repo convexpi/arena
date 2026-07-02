@@ -34,17 +34,31 @@ class FundamentalValue:
     """Jump-diffusion in log space. Agents trade around this hidden truth."""
 
     def __init__(self, initial=10_000, drift=0.0, vol_bps=8.0,
-                 jump_prob=0.002, jump_bps=150, seed=0):
+                 jump_prob=0.002, jump_bps=150, seed=0,
+                 process="gauss", horizon=200_000):
         self.value = float(initial)            # cents
         self.drift = drift
         self.vol_bps = vol_bps
         self.jump_prob = jump_prob
         self.jump_bps = jump_bps
         self.rng = random.Random(seed)
+        # process = "gauss" (default, constant-vol jump-diffusion) or "garch" (finmlsim GARCH(1,1)-t
+        # path → volatility CLUSTERING, so quiet stretches and turbulent bursts, like a real tape).
+        self.process = process
+        self._path = None
+        self._i = 0
+        if process == "garch":
+            import finmlsim as fms
+            g = fms.simulate.garch(n=int(horizon), dist="t", mu=0.0, seed=seed)
+            self._path = g / (g.std() + 1e-12) * (vol_bps / 1e4)   # avg vol = vol_bps, clustering in shape
 
     def step(self) -> float:
-        shock = self.rng.gauss(self.drift, self.vol_bps / 1e4)
-        if self.rng.random() < self.jump_prob:
+        if self.process == "garch":
+            shock = self.drift + float(self._path[self._i % len(self._path)])
+            self._i += 1
+        else:
+            shock = self.rng.gauss(self.drift, self.vol_bps / 1e4)
+        if self.rng.random() < self.jump_prob:                     # discrete jumps on top, either mode
             shock += self.rng.choice([-1, 1]) * self.jump_bps / 1e4
         self.value *= math.exp(shock)
         return self.value

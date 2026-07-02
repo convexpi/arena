@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "convexpi-arena"
-version = "0.2.0"
+version = "0.3.0"
 description = "ConvexPi Arena — discrete-time limit-order-book exchange simulator"
 readme = "README.md"
 license = { text = "MIT" }
@@ -22,6 +22,7 @@ dependencies = [
     "numpy>=1.24",
     "websockets>=12.0",
     "rich>=13.0",
+    "finmlsim>=0.4",   # optional realistic fundamental process (GARCH clustering)
 ]
 
 [project.optional-dependencies]
