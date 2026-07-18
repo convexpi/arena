@@ -18,14 +18,25 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Office/Business :: Financial",
 ]
+# The in-process simulator needs only numpy. Networking (RemoteAgent/server/viz) and the
+# GARCH fundamental are optional extras so a bare install stays lightweight and importable.
 dependencies = [
     "numpy>=1.24",
-    "websockets>=12.0",
-    "rich>=13.0",
-    "finmlsim>=0.4",   # optional realistic fundamental process (GARCH clustering)
 ]
 
 [project.optional-dependencies]
+server = [           # networked client, server, and terminal visualizer
+    "websockets>=12.0",
+    "rich>=13.0",
+]
+realistic = [        # GARCH(1,1)-t fundamental process via finmlsim
+    "finmlsim>=0.4",
+]
+all = [
+    "websockets>=12.0",
+    "rich>=13.0",
+    "finmlsim>=0.4",
+]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.23",

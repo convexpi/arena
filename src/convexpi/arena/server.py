@@ -68,8 +68,11 @@ from typing import Optional
 try:
     import websockets
     import websockets.exceptions
-except ImportError:
-    raise SystemExit("Run:  pip install websockets")
+except ImportError as _e:
+    raise ImportError(
+        "convexpi.arena server needs `websockets`. "
+        "Install it with `pip install convexpi-arena[server]` (or `pip install websockets`)."
+    ) from _e
 
 from .engine import Order, OrderType, Side
 from .agents import Agent, InformedTrader, NoiseTrader, MomentumTrader, NaiveMarketMaker

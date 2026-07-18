@@ -33,8 +33,12 @@ from typing import Optional
 try:
     import websockets
     import websockets.exceptions
-except ImportError:
-    raise SystemExit("Run:  pip install websockets")
+except ImportError as _e:
+    raise ImportError(
+        "convexpi.arena networking (RemoteAgent) needs `websockets`. "
+        "Install it with `pip install convexpi-arena[server]` (or `pip install websockets`). "
+        "The in-process simulator — Market and the agents — needs none of this."
+    ) from _e
 
 
 # ---------------------------------------------------------------------------

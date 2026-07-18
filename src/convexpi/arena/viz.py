@@ -33,8 +33,11 @@ from typing import Optional
 try:
     import websockets
     import websockets.exceptions
-except ImportError:
-    raise SystemExit("Run:  pip install websockets")
+except ImportError as _e:
+    raise ImportError(
+        "convexpi.arena viz needs `websockets`. "
+        "Install it with `pip install convexpi-arena[server]` (or `pip install websockets`)."
+    ) from _e
 
 try:
     from rich.console import Console
@@ -44,8 +47,11 @@ try:
     from rich.table import Table
     from rich.text import Text
     from rich import box
-except ImportError:
-    raise SystemExit("Run:  pip install rich")
+except ImportError as _e:
+    raise ImportError(
+        "convexpi.arena viz needs `rich`. "
+        "Install it with `pip install convexpi-arena[server]` (or `pip install rich`)."
+    ) from _e
 
 
 console = Console()
