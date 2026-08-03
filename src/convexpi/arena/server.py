@@ -613,7 +613,11 @@ class ArenaServer:
         now_iso = datetime.now(timezone.utc).isoformat()
 
         def _row(aid: str, acc: Account, user_id):
-            pnl_cents = int((acc.cash + acc.position * mark - self.initial_cash) / self.pnl_scale)
+            # round(), not int(): int() truncates toward zero, discarding everything under one cent
+            # of a scaled unit. In L3 mode pnl_scale is 1e6, so an agent could trade all session and
+            # still publish exactly $0.00 — which is what the arena-l3 board showed. Book mode
+            # (scale 1e3) is a thousand times less exposed, which is why only L3 looked dead.
+            pnl_cents = round((acc.cash + acc.position * mark - self.initial_cash) / self.pnl_scale)
             hist = self._pnl_hist.setdefault(aid, [])
             hist.append(round(pnl_cents / 100, 2))            # PnL in dollars
             if len(hist) > self._pnl_hist_len:

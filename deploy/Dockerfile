@@ -2,6 +2,12 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Without this, print() is block-buffered in a non-TTY container and never reaches the platform
+# log — the arena ran for weeks emitting nothing but "Starting Container". Only stderr got through,
+# which is why an import traceback was visible while the startup banner and per-tick output were
+# not. Diagnosing anything in production requires this.
+ENV PYTHONUNBUFFERED=1
+
 # Install the package first (layer-cached unless these change).
 # README.md is required because pyproject.toml declares `readme = "README.md"` (hatchling reads it).
 COPY pyproject.toml README.md ./
