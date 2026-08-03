@@ -83,6 +83,8 @@ from typing import Optional
 try:
     import websockets
     import websockets.exceptions
+    from websockets.datastructures import Headers
+    from websockets.http11 import Response
 except ImportError as _e:
     raise ImportError(
         "convexpi.arena server needs `websockets`. "
@@ -696,35 +698,31 @@ class ArenaServer:
     # HTTP health check (runs alongside the WebSocket server)
     # ------------------------------------------------------------------
 
-    async def _health_handler(self, reader: asyncio.StreamReader,
-                               writer: asyncio.StreamWriter) -> None:
-        """Minimal HTTP/1.1 server for GET /health — used by Railway uptime checks."""
-        try:
-            await asyncio.wait_for(reader.read(1024), timeout=2.0)
-        except asyncio.TimeoutError:
-            writer.close()
-            return
-
+    def _health_body(self) -> bytes:
         snap = self.market.snapshots[-1] if self.market.snapshots else {}
-        body = json.dumps({
+        return json.dumps({
             "status": "ok",
             "tick": snap.get("tick", 0),
             "agents": len(self._remote),
             "observers": len(self._observers),
-        })
-        response = (
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: application/json\r\n"
-            f"Content-Length: {len(body)}\r\n"
-            "Connection: close\r\n"
-            "\r\n"
-            + body
-        )
-        try:
-            writer.write(response.encode())
-            await writer.drain()
-        finally:
-            writer.close()
+        }).encode()
+
+    def _process_request(self, connection, request):
+        """Answer plain HTTP on the WebSocket port; return None to let the handshake proceed.
+
+        The health endpoint used to run on its own listener at port+1, which a platform routing a
+        single $PORT can never reach — so Railway had no signal beyond "the process exists" and a
+        crash-on-import took three restart cycles to notice. Serving it on the same port makes the
+        check actually reachable.
+        """
+        if request.path.split("?")[0].rstrip("/") not in ("/health", "/healthz"):
+            return None                       # not a health probe — proceed with the upgrade
+        body = self._health_body() + b"\n"
+        headers = Headers()
+        headers["Content-Type"] = "application/json"
+        headers["Content-Length"] = str(len(body))
+        headers["Connection"] = "close"
+        return Response(200, "OK", headers, body)
 
     async def start(self):
         features = []
@@ -738,9 +736,7 @@ class ArenaServer:
         if self.admin_token:
             features.append("admin-enabled")
 
-        health_port = self.port + 1   # e.g. 8766 when WebSocket is on 8765
-
-        print(f"Arena  ws://localhost:{self.port}  health http://localhost:{health_port}/health")
+        print(f"Arena  ws://localhost:{self.port}  health http://localhost:{self.port}/health")
         print(f"  tick={self.tick_interval}s  deadline={self.response_deadline}s  "
               f"n_ticks={self.n_ticks or '∞'}  "
               f"initial_cash=${self.initial_cash/100:.0f}")
@@ -748,12 +744,9 @@ class ArenaServer:
             print(f"  features: {'  '.join(features)}")
         print("Waiting for connections (agents / observers / admin)...\n")
 
-        health_server = await asyncio.start_server(
-            self._health_handler, "0.0.0.0", health_port
-        )
-        async with websockets.serve(self._handle_client, "0.0.0.0", self.port):
-            async with health_server:
-                await self._run_arena()
+        async with websockets.serve(self._handle_client, "0.0.0.0", self.port,
+                                    process_request=self._process_request):
+            await self._run_arena()
 
 
 # ---------------------------------------------------------------------------

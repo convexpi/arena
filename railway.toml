@@ -6,9 +6,12 @@ dockerfilePath = "deploy/Dockerfile"
 # `python -m` invokes the package directly, so it works even if the console-script bin dir
 # isn't on PATH (the cause of the earlier "convexpi-server: command not found" crash).
 startCommand = "python -m convexpi.arena.server"
-# No healthcheckPath: this is a WebSocket server on $PORT, which doesn't answer a plain HTTP GET /
-# with a 200, so an HTTP healthcheck would always fail. Railway marks the deploy healthy once the
-# container is up and listening on $PORT (which websockets.serve does).
+# The server answers GET /health on $PORT itself (process_request short-circuits the WebSocket
+# handshake for that path), so an HTTP healthcheck now works. Previously health lived on port+1,
+# which a platform routing a single $PORT could never reach — leaving "the process exists" as the
+# only signal, which is why a crash-on-import took three restart cycles to surface.
+healthcheckPath = "/health"
+healthcheckTimeout = 30
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
 
