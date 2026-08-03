@@ -60,6 +60,10 @@ class MboReplayMarket(Market):
         self.accounts.setdefault(BOOK, Account())
         self._cents = cents_per_unit
         self._qty = qty_scale
+        # One lot = one thousandth of a coin, matching the L2 book replay so the two arenas are
+        # economically comparable. Without this the engine's millionths were taken literally and a
+        # whole session moved well under a cent.
+        self.lot_size = max(1, int(qty_scale // 1000))
         # Public: quantities are integer micro-units (qty_scale per natural unit), so
         # raw PnL (cents x qty_scale) must be divided by this to recover real cents.
         self.qty_scale = qty_scale

@@ -51,6 +51,12 @@ Order format (inside agent "orders" list):
   Market:  {"order_type": "market", "side": "buy"|"sell", "qty": N}
   Cancel:  {"order_type": "cancel", "cancel_id": <order_id>}
 
+`qty` is in LOTS, not engine units. A lot is the same economic size on every venue — on the
+crypto venues it is a thousandth of a coin — so identical agent code trades identical size
+whichever arena it connects to. The server multiplies by `market.lot_size` on the way in.
+Note the asymmetry: `position`, `depth` and fill `qty` in the state you receive are reported in
+the venue's own engine units, so on an L3 venue a 1-lot fill shows as a position of 1000.
+
 Timing: each tick the server sends states to all remote agents, waits
 `response_deadline` seconds, then processes the tick with whatever orders
 arrived. Orders that miss the deadline are dropped for that tick.
@@ -492,11 +498,15 @@ class ArenaServer:
                 # Wait for responses within the deadline
                 await asyncio.sleep(self.response_deadline)
 
-                # Drain order queues
+                # Drain order queues. Remote orders arrive in lots, exactly like background agents',
+                # and convert through the same boundary — a competitor's `qty` must mean the same
+                # thing as a background agent's or the two aren't playing the same game.
+                remote_orders: list[Order] = []
                 for info in live.values():
                     q = info["queue"]
                     while not q.empty():
-                        orders.extend(q.get_nowait())
+                        remote_orders.extend(q.get_nowait())
+                orders.extend(self.market.to_engine_qty(remote_orders))
 
             # Match, settle, record
             trades = self.market.engine.process_tick(tick, orders)

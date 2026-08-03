@@ -17,7 +17,7 @@ import math
 import random
 from dataclasses import dataclass, field
 
-from .engine import MatchingEngine, Order, Side, Trade
+from .engine import MatchingEngine, Order, OrderType, Side, Trade
 from .agents import Agent, InformedTrader, NoiseTrader, MarketState
 
 
@@ -83,6 +83,24 @@ class Market:
         self.taker_fee_bps = taker_fee_bps
         # Per-agent fill telemetry: maker/taker filled volume and cumulative fees paid (cents).
         self.fill_stats: dict[str, dict] = {}
+        # Integer engine units per lot. Agents trade in LOTS; the engine matches in whatever integer
+        # unit the venue uses, and those differ by orders of magnitude between venues — a share
+        # market counts shares, the L2 book counts thousandths of a coin, the L3 replay counts
+        # millionths. Without this conversion the same `qty=10` from the same agent meant 10 shares
+        # in one venue and 0.00001 coin in another, so the L3 arena traded about a dollar of notional
+        # and every P&L rounded to $0.00 while the L2 arena traded ~$12,000. One lot is the same
+        # economic size everywhere; subclasses set this to match their unit.
+        self.lot_size = 1
+
+    def to_engine_qty(self, orders: list[Order]) -> list[Order]:
+        """Convert agent-supplied lots into engine units. Applied once, at the boundary where an
+        agent's intent enters the market — so background and remote agents are treated identically."""
+        if self.lot_size == 1:
+            return orders
+        for o in orders:
+            if o.order_type is not OrderType.CANCEL:
+                o.qty *= self.lot_size
+        return orders
 
     # ---- scenario engine -------------------------------------------------
     def at_tick(self, tick: int, fn):
@@ -131,7 +149,7 @@ class Market:
         )
 
     def _collect_orders(self, tick: int) -> list[Order]:
-        """Call on_tick for every agent in self.agents and return their orders."""
+        """Call on_tick for every agent in self.agents and return their orders, in engine units."""
         orders: list[Order] = []
         for a in self.agents:
             state = self.build_state(a.agent_id, tick)
@@ -139,7 +157,7 @@ class Market:
                 orders.extend(a.on_tick(state) or [])
             except Exception as e:
                 print(f"[tick {tick}] agent {a.agent_id} error: {e}")
-        return orders
+        return self.to_engine_qty(orders)
 
     def _record_fill(self, agent_id: str, role: str, qty: int, fee: int) -> None:
         """Accumulate maker/taker volume and fees for one side of a trade."""
