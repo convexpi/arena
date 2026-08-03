@@ -102,6 +102,16 @@ class Market:
                 o.qty *= self.lot_size
         return orders
 
+    def submit_external(self, orders: list[Order], tick: int) -> list[Order]:
+        """Admit orders that arrive from outside the local agent loop — i.e. remote competitors.
+
+        Background agents enter through `_collect_orders`, which a venue may override to impose its
+        own mechanics. Remote agents must enter through an equivalent door or the two populations
+        are playing different games on the same book. Returns the orders to hand to the engine this
+        tick; a venue that defers them (see MboReplayMarket) returns an empty list.
+        """
+        return self.to_engine_qty(orders)
+
     # ---- scenario engine -------------------------------------------------
     def at_tick(self, tick: int, fn):
         """Register a scenario: fn(market) fires at the start of `tick`."""
@@ -146,6 +156,7 @@ class Market:
             position=acct.position,
             cash=acct.cash,
             my_open_orders=mine,
+            lot_size=self.lot_size,
         )
 
     def _collect_orders(self, tick: int) -> list[Order]:

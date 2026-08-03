@@ -30,15 +30,27 @@ class MarketState:
     last_price: Optional[int]
     depth: dict                     # {"bids": [(price, qty)...], "asks": [...]}
     recent_trades: list             # trades from the previous tick
-    position: int                   # this agent's signed inventory
+    position: int                   # this agent's signed inventory, in ENGINE units (see lot_size)
     cash: int                       # this agent's cash, in cents
     my_open_orders: list            # this agent's resting orders [(order_id, side, price, qty)]
+    # Engine units per lot. Orders are submitted in LOTS; every quantity reported back —
+    # `position`, `depth`, `recent_trades[].qty`, `my_open_orders[].qty` — is in the venue's engine
+    # units, which are finer. Publishing the factor is what makes the two readable against each
+    # other, and it is what a real venue does rather than rounding your inventory to whole lots.
+    # 1 on share markets and the L2 book replay; 1000 on the L3 replay.
+    lot_size: int = 1
 
     @property
     def mid(self) -> Optional[float]:
         if self.best_bid is not None and self.best_ask is not None:
             return (self.best_bid + self.best_ask) / 2
         return self.last_price
+
+    @property
+    def position_lots(self) -> float:
+        """Inventory in the same unit orders are sized in. Fractional after a partial fill —
+        a resting lot can be filled piecewise, and rounding that away would misstate the book."""
+        return self.position / self.lot_size
 
 
 class Agent:

@@ -205,7 +205,18 @@ class MboReplayMarket(Market):
         # Don't apply agent orders immediately — stamp them with a landing time (decision + latency)
         # and let _advance interleave them with the real stream. Returning [] keeps process_tick a
         # no-op for these; the latency gap is exactly where the cancel race is won or lost.
-        for o in super()._collect_orders(tick):
+        return self._defer(super()._collect_orders(tick))
+
+    def submit_external(self, orders: list[Order], tick: int) -> list[Order]:
+        # Remote competitors go through the identical latency queue. Previously they were handed
+        # straight to the engine, so they skipped the cancel race that is the entire point of this
+        # venue — a competitor's order landed instantly while every background agent paid the
+        # latency. That is not a disadvantage to overcome, it is a different game.
+        return self._defer(super().submit_external(orders, tick))
+
+    def _defer(self, orders: list[Order]) -> list[Order]:
+        """Stamp orders with their landing time and hold them for _advance to interleave."""
+        for o in orders:
             self._pending.append((self._clock + self._latency_us, o))
         return []
 
