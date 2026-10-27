@@ -41,6 +41,7 @@ dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.23",
     "websockets>=12.0",
+    "finmlsim>=0.4",
     "hatch",
 ]
 
