@@ -36,6 +36,7 @@ restartPolicyMaxRetries = 3
 #   ARENA_TELEMETRY_TICKS  retained in-memory snapshots (default 1000; bounded)
 #   ARENA_TRADE_HISTORY_LIMIT retained trades (default 10000; bounded)
 #   ARENA_RANKINGS_INTERVAL seconds between Supabase writes (default 30)
+#   ARENA_IDLE_TIMEOUT      pause ticks/writes with no connected clients (default 30; 0 disables)
 #
 # Required to feed a live leaderboard (without these the server runs but writes
 # NO rankings, so the /compete board stays empty):

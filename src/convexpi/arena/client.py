@@ -185,14 +185,26 @@ class RemoteAgent:
                     except Exception as e:
                         print(f"on_fill error: {e}")
 
+    async def _run_forever(self):
+        """Reconnect through transient failures, including a sleeping server's cold start."""
+        delay = 1.0
+        while True:
+            try:
+                await self._run()
+                delay = 1.0
+                reason = "server closed the connection"
+            except (websockets.exceptions.WebSocketException, OSError, asyncio.TimeoutError) as e:
+                reason = f"{type(e).__name__}: {e}"
+            print(f"\nDisconnected ({reason}); retrying in {delay:g}s…")
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 10.0)
+
     def start(self):
-        """Blocking entry point. Connect and run until Ctrl-C or server closes."""
+        """Blocking entry point. Connect and automatically recover from transient disconnects."""
         try:
-            asyncio.run(self._run())
+            asyncio.run(self._run_forever())
         except KeyboardInterrupt:
             print(f"\n{self.agent_id} stopped.")
-        except websockets.exceptions.ConnectionClosed:
-            print(f"\nServer closed the connection.")
 
 
 # ---------------------------------------------------------------------------

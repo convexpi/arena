@@ -209,6 +209,7 @@ class ArenaServer:
         telemetry_ticks: int = 1_000,          # bounded server-only snapshot history
         trade_history_limit: int = 10_000,     # bounded server-only trade tape
         rankings_interval: float = 30.0,       # seconds between Supabase updates
+        idle_timeout: float = 30.0,             # pause infinite arenas after this many idle seconds
     ):
         if telemetry_ticks <= 0:
             raise ValueError("telemetry_ticks must be positive")
@@ -216,6 +217,8 @@ class ArenaServer:
             raise ValueError("trade_history_limit must be positive")
         if rankings_interval <= 0:
             raise ValueError("rankings_interval must be positive")
+        if idle_timeout < 0:
+            raise ValueError("idle_timeout must be non-negative")
         self.tick_interval = tick_interval
         self.response_deadline = min(response_deadline, tick_interval * 0.9)
         self.n_ticks = n_ticks
@@ -223,6 +226,7 @@ class ArenaServer:
         self.initial_cash = initial_cash   # cents
         self.admin_token = admin_token
         self.rankings_interval = rankings_interval
+        self.idle_timeout = idle_timeout
         self._last_rankings_push = float("-inf")
         self._rankings_push_task: asyncio.Task | None = None
 
@@ -282,7 +286,11 @@ class ArenaServer:
         # Connection registries
         self._remote: dict[str, dict] = {}          # agent_id → {ws, queue, account}
         self._observers: set = set()
+        self._admins: set = set()
         self._lock = asyncio.Lock()
+        self._activity_event = asyncio.Event()
+        self._idle_since: float | None = None
+        self._paused = False
 
         # Cross-tick state
         self._pending_scenarios: list[tuple[str, dict]] = []
@@ -328,6 +336,7 @@ class ArenaServer:
             else:
                 # Reconnect: swap socket, preserve account and PnL
                 self._remote[agent_id]["ws"] = websocket
+            self._activity_event.set()
 
         print(f"  [+] {agent_id} joined")
         await websocket.send(json.dumps({
@@ -360,6 +369,7 @@ class ArenaServer:
     async def _handle_observer(self, websocket):
         async with self._lock:
             self._observers.add(websocket)
+            self._activity_event.set()
         try:
             await websocket.send(json.dumps({"type": "welcome", "mode": "observer"}))
             await websocket.wait_closed()
@@ -377,6 +387,9 @@ class ArenaServer:
         if not hmac.compare_digest(supplied, self.admin_token):
             await websocket.close(1003, "invalid admin token")
             return
+        async with self._lock:
+            self._admins.add(websocket)
+            self._activity_event.set()
         print("  [ADMIN] instructor connected")
         await websocket.send(json.dumps({"type": "welcome", "mode": "admin"}))
         try:
@@ -390,6 +403,8 @@ class ArenaServer:
         except (websockets.exceptions.ConnectionClosed, json.JSONDecodeError):
             pass
         finally:
+            async with self._lock:
+                self._admins.discard(websocket)
             print("  [ADMIN] instructor disconnected")
 
     # ------------------------------------------------------------------
@@ -486,11 +501,69 @@ class ArenaServer:
     # Main tick loop
     # ------------------------------------------------------------------
 
+    def _has_live_clients(self) -> bool:
+        """Return whether anyone currently needs the market to advance."""
+        return (
+            any(info["ws"] is not None for info in self._remote.values())
+            or bool(self._observers)
+            or bool(self._admins)
+        )
+
+    async def _wait_for_active_clients(self) -> None:
+        """Let an infinite public arena go completely quiet when nobody is connected.
+
+        Railway's Serverless mode decides that a service is idle only after outbound traffic
+        stops. Without this gate, background agents advance forever and the rankings writer calls
+        Supabase every few seconds even on a site with no visitors. Finite simulations retain their
+        original behavior, and setting ``idle_timeout=0`` explicitly disables the gate.
+        """
+        if self.n_ticks is not None or self.idle_timeout == 0:
+            return
+
+        if self._has_live_clients():
+            self._idle_since = None
+            self._paused = False
+            return
+
+        loop = asyncio.get_running_loop()
+        if self._idle_since is None:
+            self._idle_since = loop.time()
+
+        remaining = self.idle_timeout - (loop.time() - self._idle_since)
+        if remaining > 0:
+            # Stop advancing immediately, but call it "paused" only after the configured grace
+            # period. A connection sets the event and resumes this same loop without resetting the
+            # market or the participant's account.
+            self._activity_event.clear()
+            if not self._has_live_clients():
+                try:
+                    await asyncio.wait_for(self._activity_event.wait(), timeout=remaining)
+                except asyncio.TimeoutError:
+                    pass
+
+        if self._has_live_clients():
+            self._idle_since = None
+            self._paused = False
+            return
+
+        self._paused = True
+        print(f"  [IDLE] no clients for {self.idle_timeout:g}s; market paused")
+        while not self._has_live_clients():
+            self._activity_event.clear()
+            if self._has_live_clients():
+                break
+            await self._activity_event.wait()
+
+        self._paused = False
+        self._idle_since = None
+        print("  [ACTIVE] client connected; market resumed")
+
     async def _run_arena(self):
         self.market._seed_book()
         tick = 0
 
         while self.n_ticks is None or tick < self.n_ticks:
+            await self._wait_for_active_clients()
             tick += 1
             t0 = asyncio.get_event_loop().time()
 
@@ -751,8 +824,9 @@ class ArenaServer:
         return json.dumps({
             "status": "ok",
             "tick": snap.get("tick", 0),
-            "agents": len(self._remote),
+            "agents": sum(info["ws"] is not None for info in self._remote.values()),
             "observers": len(self._observers),
+            "paused": self._paused,
         }).encode()
 
     def _process_request(self, connection, request):
@@ -788,6 +862,8 @@ class ArenaServer:
         print(f"  tick={self.tick_interval}s  deadline={self.response_deadline}s  "
               f"n_ticks={self.n_ticks or '∞'}  "
               f"initial_cash=${self.initial_cash/100:.0f}")
+        if self.n_ticks is None and self.idle_timeout:
+            print(f"  idle: pause after {self.idle_timeout:g}s without a connected client")
         if features:
             print(f"  features: {'  '.join(features)}")
         print("Waiting for connections (agents / observers / admin)...\n")
@@ -869,6 +945,10 @@ def main():
                    default=_env_float("ARENA_RANKINGS_INTERVAL", 30.0),
                    help="Seconds between Supabase ranking writes (default: 30). "
                         "Env: ARENA_RANKINGS_INTERVAL")
+    p.add_argument("--idle-timeout", type=float,
+                   default=_env_float("ARENA_IDLE_TIMEOUT", 30.0),
+                   help="Pause an infinite arena after this many seconds with no clients "
+                        "(0 disables; default: 30). Env: ARENA_IDLE_TIMEOUT")
     args = p.parse_args()
 
     server = ArenaServer(
@@ -891,6 +971,7 @@ def main():
         telemetry_ticks=args.telemetry_ticks,
         trade_history_limit=args.trade_history_limit,
         rankings_interval=args.rankings_interval,
+        idle_timeout=args.idle_timeout,
     )
     asyncio.run(server.start())
 

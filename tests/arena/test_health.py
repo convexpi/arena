@@ -4,6 +4,7 @@ It previously listened on port+1, which Railway could never route to — leaving
 running" as the only liveness signal. A crash-on-import therefore took three restart cycles to
 surface, and a server that was up but doing nothing looked identical to a healthy one.
 """
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -34,7 +35,8 @@ def test_health_body_is_json_and_describes_the_arena(server):
     assert resp.headers["Content-Type"] == "application/json"
     payload = json.loads(resp.body)
     assert payload["status"] == "ok"
-    assert set(payload) == {"status", "tick", "agents", "observers"}
+    assert set(payload) == {"status", "tick", "agents", "observers", "paused"}
+    assert payload["paused"] is False
 
 
 def test_content_length_matches_the_body(server):
@@ -106,3 +108,38 @@ async def test_admin_rejects_an_invalid_token():
     websocket = AsyncMock()
     await server._handle_admin(websocket, {"token": "wrong-secret"})
     websocket.close.assert_awaited_once_with(1003, "invalid admin token")
+
+
+def test_idle_timeout_cannot_be_negative():
+    with pytest.raises(ValueError, match="idle_timeout"):
+        ArenaServer(background_agents=_default_background(), idle_timeout=-1)
+
+
+@pytest.mark.asyncio
+async def test_infinite_server_pauses_and_wakes_for_an_observer():
+    server = ArenaServer(
+        background_agents=_default_background(),
+        n_ticks=None,
+        idle_timeout=0.01,
+    )
+    wait = asyncio.create_task(server._wait_for_active_clients())
+    await asyncio.sleep(0.02)
+    assert server._paused
+    assert not wait.done()
+
+    observer = object()
+    server._observers.add(observer)
+    server._activity_event.set()
+    await asyncio.wait_for(wait, timeout=0.1)
+    assert not server._paused
+
+
+@pytest.mark.asyncio
+async def test_finite_simulation_never_waits_for_clients():
+    server = ArenaServer(
+        background_agents=_default_background(),
+        n_ticks=2,
+        idle_timeout=0.01,
+    )
+    await asyncio.wait_for(server._wait_for_active_clients(), timeout=0.1)
+    assert not server._paused

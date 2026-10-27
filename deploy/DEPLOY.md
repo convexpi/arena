@@ -31,6 +31,7 @@ Dockerfile builder via `deploy/Dockerfile` — so the package is installed and `
 |---|---|---|
 | `ARENA_N_TICKS` | (blank) | **leave blank** = run forever (needed for an always-open ladder) |
 | `ARENA_TICK_INTERVAL` | 1.0 | seconds per tick |
+| `ARENA_IDLE_TIMEOUT` | 30 | pause the market and all ranking writes after this many seconds without a connected agent, observer, or admin; `0` restores always-on ticking |
 | `ARENA_MAX_DRAWDOWN` | (off) | $ drawdown before elimination |
 | `ARENA_POSITION_LIMIT` | (off) | max abs position before elimination |
 | `ARENA_ADMIN_TOKEN` | (off) | secret for the instructor console — **set this on a public server** |
