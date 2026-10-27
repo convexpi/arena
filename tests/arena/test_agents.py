@@ -9,6 +9,7 @@ from convexpi.arena.agents import (
     TWAPAgent,
     MeanReversionAgent,
     MarketState,
+    MomentumTrader,
 )
 from convexpi.arena.engine import Order, OrderType, Side
 
@@ -47,6 +48,13 @@ def _trade(price=1005, qty=5):
     t.price = price
     t.qty = qty
     return t
+
+
+def test_momentum_history_is_bounded_to_lookback():
+    agent = MomentumTrader("mom", lookback=20)
+    for tick in range(200):
+        agent.on_tick(_state(tick=tick))
+    assert len(agent.history) == agent.lookback
 
 
 # ---------------------------------------------------------------------------

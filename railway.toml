@@ -22,8 +22,7 @@ restartPolicyMaxRetries = 3
 #   ARENA_N_TICKS          blank = forever (the right setting for an always-open ladder)
 #   ARENA_SEED             RNG seed (default 1)
 #   ARENA_INITIAL_CASH     starting equity per agent, dollars (default 1000)
-#   ARENA_ADMIN_TOKEN      secret enabling instructor control; blank = admin DISABLED but UNAUTHED
-#                          (anyone could connect as admin — always set this for a public server)
+#   ARENA_ADMIN_TOKEN      secret enabling instructor control; blank = admin access disabled
 #   ARENA_MAX_DRAWDOWN     dollars before elimination (blank = off)
 #   ARENA_POSITION_LIMIT   max absolute position before elimination (blank = off)
 #
@@ -34,6 +33,9 @@ restartPolicyMaxRetries = 3
 #                          queues + queue-based fills; record with deploy/fetch_crypto_l3.py)
 #   ARENA_MAKER_FEE_BPS    maker fee in bps (negative = rebate; default 0)
 #   ARENA_TAKER_FEE_BPS    taker fee in bps (default 0)
+#   ARENA_TELEMETRY_TICKS  retained in-memory snapshots (default 1000; bounded)
+#   ARENA_TRADE_HISTORY_LIMIT retained trades (default 10000; bounded)
+#   ARENA_RANKINGS_INTERVAL seconds between Supabase writes (default 30)
 #
 # Required to feed a live leaderboard (without these the server runs but writes
 # NO rankings, so the /compete board stays empty):

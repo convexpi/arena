@@ -75,8 +75,10 @@ from __future__ import annotations
 import asyncio
 import json
 import argparse
+import hmac
 import os
 import urllib.request
+from collections import deque
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -204,13 +206,25 @@ class ArenaServer:
         l3_latency_us: int = 0,                # order-entry latency for L3 mode (the cancel-race clock)
         maker_fee_bps: float = 0.0,            # maker fee (negative = rebate), bps of notional
         taker_fee_bps: float = 0.0,            # taker fee, bps of notional
+        telemetry_ticks: int = 1_000,          # bounded server-only snapshot history
+        trade_history_limit: int = 10_000,     # bounded server-only trade tape
+        rankings_interval: float = 30.0,       # seconds between Supabase updates
     ):
+        if telemetry_ticks <= 0:
+            raise ValueError("telemetry_ticks must be positive")
+        if trade_history_limit <= 0:
+            raise ValueError("trade_history_limit must be positive")
+        if rankings_interval <= 0:
+            raise ValueError("rankings_interval must be positive")
         self.tick_interval = tick_interval
         self.response_deadline = min(response_deadline, tick_interval * 0.9)
         self.n_ticks = n_ticks
         self.port = port
         self.initial_cash = initial_cash   # cents
         self.admin_token = admin_token
+        self.rankings_interval = rankings_interval
+        self._last_rankings_push = float("-inf")
+        self._rankings_push_task: asyncio.Task | None = None
 
         # Quantities are integer-scaled per mode (shares=1; crypto books use sub-unit
         # micro-quantities). Raw PnL is in cents x pnl_scale, so money is reported as
@@ -245,6 +259,15 @@ class ArenaServer:
         # Fee schedule applies in every mode (default 0 = no fees).
         self.market.maker_fee_bps = maker_fee_bps
         self.market.taker_fee_bps = taker_fee_bps
+
+        # Finite in-process simulations retain complete telemetry for export.
+        # A network server is normally infinite, so the same lists leak memory
+        # in proportion to uptime. Deques preserve append, indexing, iteration,
+        # and CSV-export behavior while putting a hard ceiling on RAM.
+        self.market.snapshots = deque(self.market.snapshots, maxlen=telemetry_ticks)
+        self.market.engine.trades = deque(
+            self.market.engine.trades, maxlen=trade_history_limit
+        )
         for a in background_agents:
             self.market.accounts[a.agent_id].cash = initial_cash
 
@@ -347,7 +370,11 @@ class ArenaServer:
                 self._observers.discard(websocket)
 
     async def _handle_admin(self, websocket, first_msg: dict):
-        if self.admin_token and first_msg.get("token") != self.admin_token:
+        if not self.admin_token:
+            await websocket.close(1008, "admin access is disabled")
+            return
+        supplied = str(first_msg.get("token", ""))
+        if not hmac.compare_digest(supplied, self.admin_token):
             await websocket.close(1003, "invalid admin token")
             return
         print("  [ADMIN] instructor connected")
@@ -571,8 +598,10 @@ class ArenaServer:
             await self._broadcast(tick, fv, trades)
 
             # Push rankings to Supabase (optional — only when env vars are set)
-            if (os.environ.get("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL")) and os.environ.get("SUPABASE_SESSION_ID"):
-                asyncio.ensure_future(self._push_rankings(tick))
+            if ((os.environ.get("SUPABASE_URL")
+                 or os.environ.get("NEXT_PUBLIC_SUPABASE_URL"))
+                    and os.environ.get("SUPABASE_SESSION_ID")):
+                self._schedule_rankings_push(tick, asyncio.get_running_loop().time())
 
             # Console heartbeat
             if tick == 1 or tick % 50 == 0:
@@ -606,6 +635,20 @@ class ArenaServer:
     # ------------------------------------------------------------------
     # Supabase leaderboard push (fire-and-forget, non-blocking)
     # ------------------------------------------------------------------
+
+    def _schedule_rankings_push(self, tick: int, now: float) -> bool:
+        """Schedule at most one rate-limited rankings write.
+
+        Returns whether a task was created, which keeps the policy testable
+        without making a live Supabase request.
+        """
+        if now - self._last_rankings_push < self.rankings_interval:
+            return False
+        if self._rankings_push_task is not None and not self._rankings_push_task.done():
+            return False
+        self._last_rankings_push = now
+        self._rankings_push_task = asyncio.create_task(self._push_rankings(tick))
+        return True
 
     async def _push_rankings(self, tick: int) -> None:
         session_id = os.environ.get("SUPABASE_SESSION_ID", "")
@@ -678,9 +721,14 @@ class ArenaServer:
         last_err: Exception | None = None
         for attempt in range(2):
             try:
-                await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: urllib.request.urlopen(req, timeout=3)
-                )
+                def _send() -> None:
+                    # Consume and close the response explicitly. Returning a
+                    # live HTTPResponse repeatedly leaked connections until
+                    # garbage collection happened to reclaim them.
+                    with urllib.request.urlopen(req, timeout=3) as response:
+                        response.read()
+
+                await asyncio.get_running_loop().run_in_executor(None, _send)
                 return
             except Exception as e:
                 last_err = e
@@ -809,6 +857,18 @@ def main():
                    help="Maker fee in bps of notional (negative = rebate; default 0). Env: ARENA_MAKER_FEE_BPS")
     p.add_argument("--taker-fee-bps", type=float, default=float(os.environ.get("ARENA_TAKER_FEE_BPS", 0.0)),
                    help="Taker fee in bps of notional (default 0). Env: ARENA_TAKER_FEE_BPS")
+    p.add_argument("--telemetry-ticks", type=int,
+                   default=_env_int("ARENA_TELEMETRY_TICKS", 1000),
+                   help="Retained server snapshots (default: 1000). "
+                        "Env: ARENA_TELEMETRY_TICKS")
+    p.add_argument("--trade-history-limit", type=int,
+                   default=_env_int("ARENA_TRADE_HISTORY_LIMIT", 10000),
+                   help="Retained server trades (default: 10000). "
+                        "Env: ARENA_TRADE_HISTORY_LIMIT")
+    p.add_argument("--rankings-interval", type=float,
+                   default=_env_float("ARENA_RANKINGS_INTERVAL", 30.0),
+                   help="Seconds between Supabase ranking writes (default: 30). "
+                        "Env: ARENA_RANKINGS_INTERVAL")
     args = p.parse_args()
 
     server = ArenaServer(
@@ -828,6 +888,9 @@ def main():
         l3_latency_us=args.l3_latency_us,
         maker_fee_bps=args.maker_fee_bps,
         taker_fee_bps=args.taker_fee_bps,
+        telemetry_ticks=args.telemetry_ticks,
+        trade_history_limit=args.trade_history_limit,
+        rankings_interval=args.rankings_interval,
     )
     asyncio.run(server.start())
 

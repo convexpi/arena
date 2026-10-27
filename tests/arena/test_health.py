@@ -6,6 +6,7 @@ surface, and a server that was up but doing nothing looked identical to a health
 """
 import json
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -51,3 +52,57 @@ def test_other_paths_proceed_to_the_websocket_handshake(server, path):
 def test_health_reports_live_tick(server):
     server.market.snapshots.append({"tick": 42})
     assert json.loads(_get(server, "/health").body)["tick"] == 42
+
+
+def test_server_telemetry_histories_are_bounded():
+    server = ArenaServer(
+        background_agents=_default_background(),
+        n_ticks=5,
+        telemetry_ticks=3,
+        trade_history_limit=4,
+    )
+    for i in range(10):
+        server.market.snapshots.append({"tick": i})
+        server.market.engine.trades.append(i)
+    assert [row["tick"] for row in server.market.snapshots] == [7, 8, 9]
+    assert list(server.market.engine.trades) == [6, 7, 8, 9]
+
+
+@pytest.mark.asyncio
+async def test_rankings_pushes_are_rate_limited(monkeypatch):
+    server = ArenaServer(
+        background_agents=_default_background(),
+        n_ticks=5,
+        rankings_interval=30,
+    )
+    pushed = []
+
+    async def fake_push(tick):
+        pushed.append(tick)
+
+    monkeypatch.setattr(server, "_push_rankings", fake_push)
+    assert server._schedule_rankings_push(1, 0.0)
+    await server._rankings_push_task
+    assert not server._schedule_rankings_push(2, 29.9)
+    assert server._schedule_rankings_push(3, 30.0)
+    await server._rankings_push_task
+    assert pushed == [1, 3]
+
+
+@pytest.mark.asyncio
+async def test_admin_access_is_disabled_without_a_token(server):
+    websocket = AsyncMock()
+    await server._handle_admin(websocket, {"token": "anything"})
+    websocket.close.assert_awaited_once_with(1008, "admin access is disabled")
+
+
+@pytest.mark.asyncio
+async def test_admin_rejects_an_invalid_token():
+    server = ArenaServer(
+        background_agents=_default_background(),
+        n_ticks=5,
+        admin_token="correct-secret",
+    )
+    websocket = AsyncMock()
+    await server._handle_admin(websocket, {"token": "wrong-secret"})
+    websocket.close.assert_awaited_once_with(1003, "invalid admin token")

@@ -157,6 +157,11 @@ class MomentumTrader(Agent):
         if state.mid is None:
             return []
         self.history.append(state.mid)
+        # Only the trailing lookback window is used below. Keeping every
+        # observed mid makes a long-running Arena grow forever even with no
+        # remote players connected.
+        if len(self.history) > self.lookback:
+            del self.history[:-self.lookback]
         if len(self.history) < self.lookback:
             return []
         ret_bps = (self.history[-1] / self.history[-self.lookback] - 1) * 1e4
