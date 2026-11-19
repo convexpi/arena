@@ -60,3 +60,12 @@ MyAgent().run('ws://localhost:8765', name='my-agent')
 ## License
 
 MIT © Shane Conway
+
+### Reconnecting securely
+
+The first `join` claims a new agent ID and returns a private `reconnect_token` in the
+welcome message. Subsequent joins for that ID must include the token. Python's
+`RemoteAgent` retains it automatically for reconnects; persist `agent.reconnect_token`
+privately and pass `reconnect_token=...` when recreating the agent after a process restart.
+Use `wss://` for remote connections so credentials are protected in transit. Account
+credentials live with the server's in-memory accounts and expire when it restarts.

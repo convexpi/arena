@@ -99,14 +99,16 @@ class RemoteAgent:
     Orders received after the deadline are dropped for that tick.
 
     Reconnection: if your script disconnects, restart it with the same
-    agent_id — the server preserves your position and cash.
+    agent_id and reconnect_token — the server preserves your position and cash.
+    Automatic reconnects reuse self.reconnect_token; persist it privately across restarts.
     """
 
     DEFAULT_SERVER = "ws://localhost:8765"
 
-    def __init__(self, agent_id: str, server: str = DEFAULT_SERVER):
+    def __init__(self, agent_id: str, server: str = DEFAULT_SERVER, *, reconnect_token: str | None = None):
         self.agent_id = agent_id
         self.server = server
+        self.reconnect_token = reconnect_token
 
     # ------------------------------------------------------------------
     # Override these
@@ -144,11 +146,13 @@ class RemoteAgent:
         print(f"Connecting to {self.server} as '{self.agent_id}' ...")
         async with websockets.connect(self.server) as ws:
             # Register
-            await ws.send(json.dumps({"type": "join", "agent_id": self.agent_id}))
+            await ws.send(json.dumps({"type": "join", "agent_id": self.agent_id,
+                                      "reconnect_token": self.reconnect_token}))
             raw = await ws.recv()
             welcome = json.loads(raw)
             if welcome.get("type") != "welcome":
                 raise RuntimeError(f"Unexpected server response: {welcome}")
+            self.reconnect_token = welcome.get("reconnect_token", self.reconnect_token)
             print(f"Connected.  tick_interval={welcome.get('tick_interval')}s  "
                   f"response_deadline={welcome.get('response_deadline')}s")
             print("Running — Ctrl-C to stop.\n")

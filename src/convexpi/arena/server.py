@@ -76,6 +76,7 @@ import asyncio
 import json
 import argparse
 import hmac
+import secrets
 import os
 import urllib.request
 from collections import deque
@@ -324,24 +325,37 @@ class ArenaServer:
 
     async def _handle_agent(self, websocket, join_msg: dict):
         agent_id = str(join_msg["agent_id"])
+        previous_ws = None
         async with self._lock:
             if agent_id not in self._remote:
+                if agent_id in self.market.accounts or not agent_id or len(agent_id) > 128:
+                    await websocket.close(1008, "agent id unavailable")
+                    return
+                token = secrets.token_urlsafe(32)
                 acct = Account(cash=self.initial_cash)
                 self._remote[agent_id] = {
-                    "ws": websocket,
-                    "queue": asyncio.Queue(),
-                    "account": acct,
+                    "ws": websocket, "queue": asyncio.Queue(), "account": acct,
+                    "reconnect_token": token,
                 }
                 self.market.accounts[agent_id] = acct
             else:
-                # Reconnect: swap socket, preserve account and PnL
-                self._remote[agent_id]["ws"] = websocket
+                remote = self._remote[agent_id]
+                supplied = join_msg.get("reconnect_token")
+                if not isinstance(supplied, str) or not hmac.compare_digest(
+                        supplied, remote["reconnect_token"]):
+                    await websocket.close(1008, "invalid reconnect credential")
+                    return
+                previous_ws = remote["ws"]
+                remote["ws"] = websocket
             self._activity_event.set()
+        if previous_ws is not None and previous_ws is not websocket:
+            await previous_ws.close(1000, "authenticated reconnect")
 
         print(f"  [+] {agent_id} joined")
         await websocket.send(json.dumps({
             "type": "welcome",
             "agent_id": agent_id,
+            "reconnect_token": self._remote[agent_id]["reconnect_token"],
             "tick_interval": self.tick_interval,
             "response_deadline": self.response_deadline,
             "initial_cash_cents": self.initial_cash,
@@ -357,12 +371,15 @@ class ArenaServer:
                     o for d in msg.get("orders", [])
                     if (o := _parse_order(agent_id, d)) is not None
                 ]
-                await self._remote[agent_id]["queue"].put(orders)
+                async with self._lock:
+                    if self._remote[agent_id]["ws"] is not websocket:
+                        break
+                    self._remote[agent_id]["queue"].put_nowait(orders)
         except (websockets.exceptions.ConnectionClosed, json.JSONDecodeError):
             pass
         finally:
             async with self._lock:
-                if agent_id in self._remote:
+                if agent_id in self._remote and self._remote[agent_id]["ws"] is websocket:
                     self._remote[agent_id]["ws"] = None
             print(f"  [-] {agent_id} disconnected")
 
